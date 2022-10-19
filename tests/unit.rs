@@ -9,9 +9,11 @@ mod tests {
         bytes::complete::{tag, take_until, take_while, take},
         multi::{many0, separated_list0},
         IResult};
+    use std::{fs::File, io::{Read, BufReader}};
 
-    #[derive(PartialEq, Debug)]
+    #[derive(PartialEq, Debug, Default)]
     struct Fixture {
+        count: u32,
         m: Vec<u8>,
         pk: Vec<u8>,
         sk: Vec<u8>,
@@ -28,7 +30,8 @@ mod tests {
     }
 
     fn parse_fixture(s: &str) -> IResult<&str, Fixture> {
-        let (s, _) = take_until("\n")(s)?;
+        let (s, _) = tag("count = ")(s)?;
+        let (s, count) = take_until("\n")(s)?;
         let (s, _) = take(1u8)(s)?;
         
         let (s, _) = tag("m = ")(s)?;
@@ -83,6 +86,7 @@ mod tests {
         let (s, c) = take_until("\n\n")(s)?;
         let (s, _) = take(2u8)(s)?;
 
+        let count = u32::from_str_radix(count, 10).unwrap();
         let m = parse_byte_vector(m)?.1;
         let pk = parse_byte_vector(pk)?.1;
         let sk = parse_byte_vector(sk)?.1;
@@ -97,7 +101,7 @@ mod tests {
         let t0 = parse_poly_list(t0)?.1;
         let c = parse_ones_vector(c)?.1;
 
-        Ok((s, Fixture{m, pk, sk, sig, seed, a, s : s_, y, w1, w0, t1, t0, c}))
+        Ok((&s, Fixture{count, m, pk, sk, sig, seed, a, s : s_, y, w1, w0, t1, t0, c}))
     }
 
     fn parse_byte_vector(s: &str) -> IResult<&str, Vec<u8>> {
@@ -170,23 +174,22 @@ mod tests {
 
     #[test]
     fn expand() {
-        assert_eq!(parse_bracket_list("[123, -132, 0, 0]").unwrap().1, vec!["123", "-132", "0", "0"]);
+        const N: u32 = 100;
+        const FIXTURE_TEXT_SIZE_MAX: u32 = 1000000;
+        let mut buf = BufReader::new(File::open("tests/fixtures.txt").unwrap()).take(u64::from(N * FIXTURE_TEXT_SIZE_MAX));
+        let mut s = String::new();
 
-        let fixture_str = std::fs::read_to_string("tests/fixtures.txt").unwrap();
-        assert_eq!(parse_fixture(fixture_str.as_str()).unwrap().1, Fixture{
-            m: Vec::new(),
-            pk: Vec::new(),
-            sk: Vec::new(),
-            sig: Vec::new(),
-            seed: Vec::new(),
-            a: Vec::new(),
-            s: Vec::new(),
-            y: Vec::new(),
-            w1: Vec::new(),
-            w0: Vec::new(),
-            t1: Vec::new(),
-            t0: Vec::new(),
-            c: Vec::new()
-        });
+        buf.read_to_string(&mut s).unwrap();
+
+        let fixtures: Vec<Fixture> = (0..N)
+            .scan((s.as_str(), Fixture::default()),
+                |(s, _), _| {
+                    let (remainder, fixture) = parse_fixture(s).ok()?;
+                    *s = remainder;
+                    Some(fixture)
+            })
+            .collect();
+
+        assert!((0..N).eq(fixtures.iter().map(|fixture| fixture.count)));
     }
 }

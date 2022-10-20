@@ -4,12 +4,16 @@ extern crate nom;
 
 mod tests {
     use nom::{
-        sequence::{pair, delimited},
+        bytes::complete::{tag, take, take_until, take_while},
         character::complete::char,
-        bytes::complete::{tag, take_until, take_while, take},
         multi::{many0, separated_list0},
-        IResult};
-    use std::{fs::File, io::{Read, BufReader}};
+        sequence::{delimited, pair},
+        IResult,
+    };
+    use std::{
+        fs::File,
+        io::{BufReader, Read},
+    };
 
     #[derive(PartialEq, Debug, Default)]
     struct Fixture {
@@ -26,22 +30,22 @@ mod tests {
         w0: Vec<Vec<i32>>,
         t1: Vec<Vec<i32>>,
         t0: Vec<Vec<i32>>,
-        c: Vec<i8>
+        c: Vec<i8>,
     }
 
     fn parse_fixture(s: &str) -> IResult<&str, Fixture> {
         let (s, _) = tag("count = ")(s)?;
         let (s, count) = take_until("\n")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("m = ")(s)?;
         let (s, m) = take_until("\n")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("pk = ")(s)?;
         let (s, pk) = take_until("\n")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("sk = ")(s)?;
         let (s, sk) = take_until("\n")(s)?;
         let (s, _) = take(1u8)(s)?;
@@ -49,7 +53,7 @@ mod tests {
         let (s, _) = tag("sig = ")(s)?;
         let (s, sig) = take_until("\n")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("seed = ")(s)?;
         let (s, seed) = take_until("\n")(s)?;
         let (s, _) = take(1u8)(s)?;
@@ -57,31 +61,31 @@ mod tests {
         let (s, _) = tag("A = ")(s)?;
         let (s, a) = take_until("\ns =")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("s = ")(s)?;
         let (s, s_) = take_until("\ny =")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("y = ")(s)?;
         let (s, y) = take_until("\nw1 =")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("w1 = ")(s)?;
         let (s, w1) = take_until("\nw0 =")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("w0 = ")(s)?;
         let (s, w0) = take_until("\nt1 =")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("t1 = ")(s)?;
         let (s, t1) = take_until("\nt0 =")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("t0 = ")(s)?;
         let (s, t0) = take_until("\nc =")(s)?;
         let (s, _) = take(1u8)(s)?;
-        
+
         let (s, _) = tag("c = ")(s)?;
         let (s, c) = take_until("\n\n")(s)?;
         let (s, _) = take(2u8)(s)?;
@@ -101,23 +105,43 @@ mod tests {
         let t0 = parse_poly_list(t0)?.1;
         let c = parse_ones_vector(c)?.1;
 
-        Ok((&s, Fixture{count, m, pk, sk, sig, seed, a, s : s_, y, w1, w0, t1, t0, c}))
+        Ok((
+            &s,
+            Fixture {
+                count,
+                m,
+                pk,
+                sk,
+                sig,
+                seed,
+                a,
+                s: s_,
+                y,
+                w1,
+                w0,
+                t1,
+                t0,
+                c,
+            },
+        ))
     }
 
     fn parse_byte_vector(s: &str) -> IResult<&str, Vec<u8>> {
         let (s, char_vec) = many0(take(2u8))(s)?;
-        let byte_vec = char_vec.iter()
-                 .map(|s| u8::from_str_radix(s, 16).unwrap())
-                 .collect();
+        let byte_vec = char_vec
+            .iter()
+            .map(|s| u8::from_str_radix(s, 16).unwrap())
+            .collect();
 
         Ok((s, byte_vec))
     }
-    
+
     fn parse_ones_vector(s: &str) -> IResult<&str, Vec<i8>> {
         let (s, char_vec) = parse_bracket_list(s)?;
-        let byte_vec = char_vec.iter()
-                 .map(|s| i8::from_str_radix(s, 10).unwrap())
-                 .collect();
+        let byte_vec = char_vec
+            .iter()
+            .map(|s| i8::from_str_radix(s, 10).unwrap())
+            .collect();
 
         Ok((s, byte_vec))
     }
@@ -126,14 +150,21 @@ mod tests {
         let (s, char_vec) = delimited(
             char('('),
             separated_list0(tag(";\n     "), parse_bracket_lists),
-            char(')')
+            char(')'),
         )(s)?;
 
-        let mat = char_vec.iter().map(|v| -> Vec<Vec<u32>> {
-            v.iter().map(|v| -> Vec<u32> {
-                v.iter().map(|s| u32::from_str_radix(s, 10).unwrap()).collect()
-            }).collect()
-        }).collect();
+        let mat = char_vec
+            .iter()
+            .map(|v| -> Vec<Vec<u32>> {
+                v.iter()
+                    .map(|v| -> Vec<u32> {
+                        v.iter()
+                            .map(|s| u32::from_str_radix(s, 10).unwrap())
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect();
 
         Ok((s, mat))
     }
@@ -146,22 +177,35 @@ mod tests {
         let (s, char_vec) = delimited(
             char('('),
             separated_list0(pair(tag(",\n"), take_while(is_space)), parse_bracket_list),
-            char(')')
+            char(')'),
         )(s)?;
 
-        let mat = char_vec.iter().map(|v| -> Vec<i32> {
-            v.iter().map(|s| { i32::from_str_radix(s, 10).unwrap() }).collect()
-        }).collect();
+        let mat = char_vec
+            .iter()
+            .map(|v| -> Vec<i32> {
+                v.iter()
+                    .map(|s| i32::from_str_radix(s, 10).unwrap())
+                    .collect()
+            })
+            .collect();
 
         Ok((s, mat))
     }
 
     fn parse_bracket_list(s: &str) -> IResult<&str, Vec<&str>> {
-        delimited(char('['), separated_list0(char(','), take_trimmed_integer), char(']'))(s)
+        delimited(
+            char('['),
+            separated_list0(char(','), take_trimmed_integer),
+            char(']'),
+        )(s)
     }
 
     fn take_trimmed_integer(s: &str) -> IResult<&str, &str> {
-        delimited(take_while(is_space), take_while(is_minus_or_digit), take_while(is_space))(s)
+        delimited(
+            take_while(is_space),
+            take_while(is_minus_or_digit),
+            take_while(is_space),
+        )(s)
     }
 
     fn is_space(c: char) -> bool {
@@ -176,17 +220,17 @@ mod tests {
     fn expand() {
         const N: u32 = 100;
         const FIXTURE_TEXT_SIZE_MAX: u32 = 1000000;
-        let mut buf = BufReader::new(File::open("tests/fixtures.txt").unwrap()).take(u64::from(N * FIXTURE_TEXT_SIZE_MAX));
+        let mut buf = BufReader::new(File::open("tests/fixtures.txt").unwrap())
+            .take(u64::from(N * FIXTURE_TEXT_SIZE_MAX));
         let mut s = String::new();
 
         buf.read_to_string(&mut s).unwrap();
 
         let fixtures: Vec<Fixture> = (0..N)
-            .scan((s.as_str(), Fixture::default()),
-                |(s, _), _| {
-                    let (remainder, fixture) = parse_fixture(s).ok()?;
-                    *s = remainder;
-                    Some(fixture)
+            .scan((s.as_str(), Fixture::default()), |(s, _), _| {
+                let (remainder, fixture) = parse_fixture(s).ok()?;
+                *s = remainder;
+                Some(fixture)
             })
             .collect();
 

@@ -28,3 +28,12 @@ fn test_expand_s() {
         assert_eq!(fixture.s, expand_s(&fixture.seed), "{}", i);
     }
 }
+
+#[test]
+fn test_expand_y() {
+    let fixtures = fixtures::fixtures();
+
+    for (i, fixture) in fixtures.iter().enumerate() {
+        assert_eq!(fixture.y, expand_y(&fixture.seed), "{}", i);
+    }
+}

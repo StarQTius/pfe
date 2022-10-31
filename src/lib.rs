@@ -17,6 +17,7 @@ const ETA: PolynomialCoeff = 2;
 const POLYNOMIAL_DEGREE: usize = 256;
 const SAMPLE_INTEGER_SIZE: usize = 3;
 const HALF_SEED_SIZE: usize = SEED_SIZE / 2;
+const GAMMA: PolynomialCoeff = 1 << 19;
 
 pub fn expand_a(seed: &[u8; SEED_SIZE]) -> [[Polynomial; L as usize]; K as usize] {
     let mut hasher = sha3::Sha3::shake_128();
@@ -77,6 +78,39 @@ pub fn expand_s(seed: &[u8; SEED_SIZE]) -> [Polynomial; L as usize] {
                 }
             })
             .map(|coeff| ETA - (coeff % (2 * ETA + 1)))
+        })
+        .collect::<Vec<Polynomial>>()
+        // Should not fail since we are iterating over `L` elements
+        .try_into()
+        .unwrap()
+}
+
+pub fn expand_y(seed: &[u8; SEED_SIZE]) -> [Polynomial; L as usize] {
+    let mut hasher = sha3::Sha3::shake_256();
+    let mut block_buf = [0; 3];
+
+    (0..L)
+        .map(|nonce| {
+            hasher.reset();
+            hasher.input(&seed[..SEED_SIZE]);
+            hasher.input(&nonce.to_le_bytes());
+
+            expand_polynomial(1 - GAMMA, GAMMA, |i| {
+                let k = 4 * (i % 2);
+
+                if k == 0 {
+                    hasher.result(&mut block_buf);
+                } else {
+                    block_buf[0] = block_buf[2];
+                    hasher.result(&mut block_buf[1..]);
+                }
+
+                let mut coeff = (block_buf[0] as PolynomialCoeff) >> k;
+                coeff |= (block_buf[1] as PolynomialCoeff) << (8 - k);
+                coeff |= (block_buf[2] as PolynomialCoeff) << (16 - k);
+                coeff &= 0xfffff;
+                GAMMA - coeff
+            })
         })
         .collect::<Vec<Polynomial>>()
         // Should not fail since we are iterating over `L` elements

@@ -1,4 +1,4 @@
-use crate::{SEED_SIZE, PolynomialCoeff};
+use crate::{PolynomialCoeff, SEED_SIZE};
 
 use nom::{
     bytes::complete::{tag, take, take_until, take_while},
@@ -129,7 +129,8 @@ fn parse_fixture(s: &str) -> IResult<&str, Fixture> {
     let t0 = parse_poly_list(t0)?.1;
     let c = parse_ones_vector(c)?.1;
 
-    Ok((&s,
+    Ok((
+        &s,
         Fixture {
             count,
             m,

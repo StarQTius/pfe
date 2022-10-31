@@ -21,12 +21,13 @@ pub fn expand_a(seed: &[u8; SEED_SIZE]) -> [[Polynomial; L as usize]; K as usize
         .map(|(i, j)| (i, expand_vec(seed, (i << 8) + j)))
         .group_by(|(i, _)| *i)
         .into_iter()
-        .map(|(_, it)| it
-             .map(|(_, poly)| poly)
-             .collect::<Vec<Polynomial>>()
-             // `group_by()` should have resulted in an iterator of iterators each of count `L`
-             .try_into()
-             .unwrap())
+        .map(|(_, it)| {
+            it.map(|(_, poly)| poly)
+                .collect::<Vec<Polynomial>>()
+                // `group_by()` should have resulted in an iterator of iterators each of count `L`
+                .try_into()
+                .unwrap()
+        })
         .collect::<Vec<[Polynomial; L as usize]>>()
         // `group_by()` should have resulted in an iterator of count `K`
         .try_into()

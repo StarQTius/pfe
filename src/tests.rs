@@ -1,4 +1,4 @@
-use super::*;
+use crate::*;
 use pretty_assertions::assert_eq;
 
 mod fixtures;

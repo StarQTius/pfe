@@ -1,3 +1,5 @@
+use crate::{SEED_SIZE, PolynomialCoeff};
+
 use nom::{
     bytes::complete::{tag, take, take_until, take_while},
     character::complete::char,
@@ -14,10 +16,6 @@ const N: u32 = 100;
 const FIXTURE_TEXT_SIZE_MAX: u32 = 1000000;
 static mut FIXTURES: Vec<Fixture> = Vec::new();
 
-pub fn fixtures() -> &'static Vec<Fixture> {
-    unsafe { &FIXTURES }
-}
-
 #[derive(PartialEq, Debug, Default)]
 pub struct Fixture {
     pub count: u32,
@@ -25,8 +23,8 @@ pub struct Fixture {
     pub pk: Vec<u8>,
     pub sk: Vec<u8>,
     pub sig: Vec<u8>,
-    pub seed: Vec<u8>,
-    pub a: Vec<Vec<Vec<u32>>>,
+    pub seed: [u8; SEED_SIZE],
+    pub a: Vec<Vec<Vec<PolynomialCoeff>>>,
     pub s: Vec<Vec<i32>>,
     pub y: Vec<Vec<i32>>,
     pub w1: Vec<Vec<i32>>,
@@ -34,6 +32,29 @@ pub struct Fixture {
     pub t1: Vec<Vec<i32>>,
     pub t0: Vec<Vec<i32>>,
     pub c: Vec<i8>,
+}
+
+pub fn fixtures() -> &'static Vec<Fixture> {
+    unsafe { &FIXTURES }
+}
+
+#[ctor::ctor]
+unsafe fn make_fixtures() {
+    let mut buf = BufReader::new(File::open("rsrc/fixtures.txt").unwrap())
+        .take(u64::from(N * FIXTURE_TEXT_SIZE_MAX));
+    let mut s = String::new();
+
+    buf.read_to_string(&mut s).unwrap();
+
+    FIXTURES = (0..N)
+        .scan((s.as_str(), Fixture::default()), |(s, _), _| {
+            let (remainder, fixture) = parse_fixture(s).ok()?;
+            *s = remainder;
+            Some(fixture)
+        })
+        .collect();
+
+    assert!((0..N).eq(FIXTURES.iter().map(|fixture| fixture.count)));
 }
 
 fn parse_fixture(s: &str) -> IResult<&str, Fixture> {
@@ -98,7 +119,7 @@ fn parse_fixture(s: &str) -> IResult<&str, Fixture> {
     let pk = parse_byte_vector(pk)?.1;
     let sk = parse_byte_vector(sk)?.1;
     let sig = parse_byte_vector(sig)?.1;
-    let seed = parse_byte_vector(seed)?.1;
+    let seed = parse_byte_vector(seed)?.1[..SEED_SIZE].try_into().unwrap();
     let a = parse_matrix(a)?.1;
     let s_ = parse_poly_list(s_)?.1;
     let y = parse_poly_list(y)?.1;
@@ -108,8 +129,7 @@ fn parse_fixture(s: &str) -> IResult<&str, Fixture> {
     let t0 = parse_poly_list(t0)?.1;
     let c = parse_ones_vector(c)?.1;
 
-    Ok((
-        &s,
+    Ok((&s,
         Fixture {
             count,
             m,
@@ -217,23 +237,4 @@ fn is_space(c: char) -> bool {
 
 fn is_minus_or_digit(c: char) -> bool {
     c.is_digit(10) || c == '-'
-}
-
-#[ctor::ctor]
-unsafe fn make_fixtures() {
-    let mut buf = BufReader::new(File::open("rsrc/fixtures.txt").unwrap())
-        .take(u64::from(N * FIXTURE_TEXT_SIZE_MAX));
-    let mut s = String::new();
-
-    buf.read_to_string(&mut s).unwrap();
-
-    FIXTURES = (0..N)
-        .scan((s.as_str(), Fixture::default()), |(s, _), _| {
-            let (remainder, fixture) = parse_fixture(s).ok()?;
-            *s = remainder;
-            Some(fixture)
-        })
-        .collect();
-
-    assert!((0..N).eq(FIXTURES.iter().map(|fixture| fixture.count)));
 }

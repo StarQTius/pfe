@@ -16,7 +16,7 @@ const N: u32 = 100;
 const FIXTURE_TEXT_SIZE_MAX: u32 = 1000000;
 static mut FIXTURES: Vec<Fixture> = Vec::new();
 
-#[derive(PartialEq, Debug, Default)]
+#[derive(PartialEq, Debug)]
 pub struct Fixture {
     pub count: u32,
     pub m: Vec<u8>,
@@ -25,13 +25,34 @@ pub struct Fixture {
     pub sig: Vec<u8>,
     pub seed: [u8; SEED_SIZE],
     pub a: Vec<Vec<Vec<PolynomialCoeff>>>,
-    pub s: Vec<Vec<i32>>,
-    pub y: Vec<Vec<i32>>,
-    pub w1: Vec<Vec<i32>>,
-    pub w0: Vec<Vec<i32>>,
-    pub t1: Vec<Vec<i32>>,
-    pub t0: Vec<Vec<i32>>,
+    pub s: Vec<Vec<PolynomialCoeff>>,
+    pub y: Vec<Vec<PolynomialCoeff>>,
+    pub w1: Vec<Vec<PolynomialCoeff>>,
+    pub w0: Vec<Vec<PolynomialCoeff>>,
+    pub t1: Vec<Vec<PolynomialCoeff>>,
+    pub t0: Vec<Vec<PolynomialCoeff>>,
     pub c: Vec<i8>,
+}
+
+impl Default for Fixture {
+    fn default() -> Self {
+        Fixture {
+            count: 0,
+            m: Vec::default(),
+            pk: Vec::default(),
+            sk: Vec::default(),
+            sig: Vec::default(),
+            seed: [0; SEED_SIZE],
+            a: Vec::default(),
+            s: Vec::default(),
+            y: Vec::default(),
+            w1: Vec::default(),
+            w0: Vec::default(),
+            t1: Vec::default(),
+            t0: Vec::default(),
+            c: Vec::default(),
+        }
+    }
 }
 
 pub fn fixtures() -> &'static Vec<Fixture> {
@@ -170,7 +191,7 @@ fn parse_ones_vector(s: &str) -> IResult<&str, Vec<i8>> {
     Ok((s, byte_vec))
 }
 
-fn parse_matrix(s: &str) -> IResult<&str, Vec<Vec<Vec<u32>>>> {
+fn parse_matrix(s: &str) -> IResult<&str, Vec<Vec<Vec<PolynomialCoeff>>>> {
     let (s, char_vec) = delimited(
         char('('),
         separated_list0(tag(";\n     "), parse_bracket_lists),
@@ -179,11 +200,11 @@ fn parse_matrix(s: &str) -> IResult<&str, Vec<Vec<Vec<u32>>>> {
 
     let mat = char_vec
         .iter()
-        .map(|v| -> Vec<Vec<u32>> {
+        .map(|v| -> Vec<Vec<PolynomialCoeff>> {
             v.iter()
-                .map(|v| -> Vec<u32> {
+                .map(|v| -> Vec<PolynomialCoeff> {
                     v.iter()
-                        .map(|s| u32::from_str_radix(s, 10).unwrap())
+                        .map(|s| PolynomialCoeff::from_str_radix(s, 10).unwrap())
                         .collect()
                 })
                 .collect()
@@ -197,7 +218,7 @@ fn parse_bracket_lists(s: &str) -> IResult<&str, Vec<Vec<&str>>> {
     separated_list0(tag(", "), parse_bracket_list)(s)
 }
 
-fn parse_poly_list(s: &str) -> IResult<&str, Vec<Vec<i32>>> {
+fn parse_poly_list(s: &str) -> IResult<&str, Vec<Vec<PolynomialCoeff>>> {
     let (s, char_vec) = delimited(
         char('('),
         separated_list0(pair(tag(",\n"), take_while(is_space)), parse_bracket_list),
@@ -206,9 +227,9 @@ fn parse_poly_list(s: &str) -> IResult<&str, Vec<Vec<i32>>> {
 
     let mat = char_vec
         .iter()
-        .map(|v| -> Vec<i32> {
+        .map(|v| -> Vec<PolynomialCoeff> {
             v.iter()
-                .map(|s| i32::from_str_radix(s, 10).unwrap())
+                .map(|s| PolynomialCoeff::from_str_radix(s, 10).unwrap())
                 .collect()
         })
         .collect();

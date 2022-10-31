@@ -5,20 +5,39 @@ use std::mem::size_of;
 #[cfg(test)]
 mod tests;
 
-pub type PolynomialCoeff = u32;
+pub type PolynomialCoeff = i64;
 pub type Polynomial = [PolynomialCoeff; POLYNOMIAL_DEGREE];
 
 pub const K: u16 = 8;
 pub const L: u16 = 7;
-pub const SEED_SIZE: usize = 32;
+pub const SEED_SIZE: usize = 64;
 
 const Q: PolynomialCoeff = 8380417;
+const ETA: PolynomialCoeff = 2;
 const POLYNOMIAL_DEGREE: usize = 256;
 const SAMPLE_INTEGER_SIZE: usize = 3;
+const HALF_SEED_SIZE: usize = SEED_SIZE / 2;
 
 pub fn expand_a(seed: &[u8; SEED_SIZE]) -> [[Polynomial; L as usize]; K as usize] {
+    let mut hasher = sha3::Sha3::shake_128();
+    let mut block_buf = [0; size_of::<PolynomialCoeff>()];
+
     iproduct!(0..K, 0..L)
-        .map(|(i, j)| (i, expand_vec(seed, (i << 8) + j)))
+        .map(|(i, j)| {
+            hasher.reset();
+            hasher.input(&seed[..HALF_SEED_SIZE]);
+            hasher.input(&((i << 8) + j).to_le_bytes());
+
+            (
+                i,
+                expand_polynomial(0, Q - 1, |_| {
+                    hasher.result(&mut block_buf[..SAMPLE_INTEGER_SIZE]);
+                    block_buf[SAMPLE_INTEGER_SIZE - 1] &= 0x7f;
+
+                    PolynomialCoeff::from_le_bytes(block_buf)
+                }),
+            )
+        })
         .group_by(|(i, _)| *i)
         .into_iter()
         .map(|(_, it)| {
@@ -34,21 +53,45 @@ pub fn expand_a(seed: &[u8; SEED_SIZE]) -> [[Polynomial; L as usize]; K as usize
         .unwrap()
 }
 
-fn expand_vec(seed: &[u8; SEED_SIZE], nonce: u16) -> Polynomial {
-    let mut hasher = sha3::Sha3::shake_128();
-    let mut block_buf = [0; size_of::<PolynomialCoeff>()];
+pub fn expand_s(seed: &[u8; SEED_SIZE]) -> [Polynomial; L as usize] {
+    let mut hasher = sha3::Sha3::shake_256();
+    let mut block_buf_opt: Option<[u8; 1]> = None;
 
-    hasher.input(&seed[..SEED_SIZE]);
-    hasher.input(&nonce.to_le_bytes());
+    (0..L)
+        .map(|nonce| {
+            hasher.reset();
+            hasher.input(&seed[..SEED_SIZE]);
+            hasher.input(&nonce.to_le_bytes());
+            block_buf_opt = None;
 
-    (0..)
-        .map(|_| {
-            hasher.result(&mut block_buf[..SAMPLE_INTEGER_SIZE]);
-            block_buf[SAMPLE_INTEGER_SIZE - 1] &= 0x7f;
-
-            PolynomialCoeff::from_le_bytes(block_buf)
+            expand_polynomial(0, 14, |_| match block_buf_opt {
+                None => {
+                    let mut block_buf = [0; 1];
+                    hasher.result(&mut block_buf);
+                    block_buf_opt = Some(block_buf);
+                    (block_buf[0] & 0xf) as PolynomialCoeff
+                }
+                Some(block_buf) => {
+                    block_buf_opt = None;
+                    (block_buf[0] >> 4) as PolynomialCoeff
+                }
+            })
+            .map(|coeff| ETA - (coeff % (2 * ETA + 1)))
         })
-        .filter(|coeff| coeff < &Q)
+        .collect::<Vec<Polynomial>>()
+        // Should not fail since we are iterating over `L` elements
+        .try_into()
+        .unwrap()
+}
+
+fn expand_polynomial(
+    inf: PolynomialCoeff,
+    sup: PolynomialCoeff,
+    generator: impl FnMut(i32) -> PolynomialCoeff,
+) -> Polynomial {
+    (0..)
+        .map(generator)
+        .filter(|coeff| &inf <= coeff && coeff <= &sup)
         .take(POLYNOMIAL_DEGREE)
         .collect::<Vec<PolynomialCoeff>>()
         // Should not fail since we took exactly `POLYNOMIAL_DEGREE` elements

@@ -25,7 +25,14 @@ fn test_expand_s() {
     let fixtures = fixtures::fixtures();
 
     for (i, fixture) in fixtures.iter().enumerate() {
-        assert_eq!(fixture.s, expand_s(&fixture.seed), "{}", i);
+        for (j, (lpoly, rpoly)) in fixture
+            .s
+            .iter()
+            .zip(expand_s(&fixture.seed).iter())
+            .enumerate()
+        {
+            assert_eq!(lpoly, rpoly, "{} -- {}", i, j);
+        }
     }
 }
 
@@ -34,6 +41,28 @@ fn test_expand_y() {
     let fixtures = fixtures::fixtures();
 
     for (i, fixture) in fixtures.iter().enumerate() {
-        assert_eq!(fixture.y, expand_y(&fixture.seed), "{}", i);
+        for (j, (lpoly, rpoly)) in fixture
+            .y
+            .iter()
+            .zip(expand_y(&fixture.seed).iter())
+            .enumerate()
+        {
+            assert_eq!(lpoly, rpoly, "{} -- {}", i, j);
+        }
+    }
+}
+
+#[test]
+fn test_make_wvecs() {
+    let fixtures = fixtures::fixtures();
+
+    for (i, fixture) in fixtures.iter().enumerate() {
+        let (w0, w1) = make_w_vecs(&fixture.a, fixture.y);
+        for (j, (lpoly, rpoly)) in fixture.w0.iter().zip(w0.iter()).enumerate() {
+            assert_eq!(lpoly, rpoly, "w0 {} -- {}", i, j);
+        }
+        for (j, (lpoly, rpoly)) in fixture.w1.iter().zip(w1.iter()).enumerate() {
+            assert_eq!(lpoly, rpoly, "w1 {} -- {}", i, j);
+        }
     }
 }

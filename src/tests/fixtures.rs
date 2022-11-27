@@ -1,4 +1,4 @@
-use crate::{PolynomialCoeff, SEED_SIZE};
+use crate::{Polynomial, PolynomialCoeff, K, L, SEED_SIZE};
 
 use nom::{
     bytes::complete::{tag, take, take_until, take_while},
@@ -24,13 +24,13 @@ pub struct Fixture {
     pub sk: Vec<u8>,
     pub sig: Vec<u8>,
     pub seed: [u8; SEED_SIZE],
-    pub a: Vec<Vec<Vec<PolynomialCoeff>>>,
-    pub s: Vec<Vec<PolynomialCoeff>>,
-    pub y: Vec<Vec<PolynomialCoeff>>,
-    pub w1: Vec<Vec<PolynomialCoeff>>,
-    pub w0: Vec<Vec<PolynomialCoeff>>,
-    pub t1: Vec<Vec<PolynomialCoeff>>,
-    pub t0: Vec<Vec<PolynomialCoeff>>,
+    pub a: [[Polynomial; L as usize]; K as usize],
+    pub s: [Polynomial; L as usize],
+    pub y: [Polynomial; L as usize],
+    pub w1: [Polynomial; K as usize],
+    pub w0: [Polynomial; K as usize],
+    pub t1: [Polynomial; K as usize],
+    pub t0: [Polynomial; K as usize],
     pub c: Vec<i8>,
 }
 
@@ -43,13 +43,13 @@ impl Default for Fixture {
             sk: Vec::default(),
             sig: Vec::default(),
             seed: [0; SEED_SIZE],
-            a: Vec::default(),
-            s: Vec::default(),
-            y: Vec::default(),
-            w1: Vec::default(),
-            w0: Vec::default(),
-            t1: Vec::default(),
-            t0: Vec::default(),
+            a: [[[0; 256]; L as usize]; K as usize],
+            s: [[0; 256]; L as usize],
+            y: [[0; 256]; L as usize],
+            w1: [[0; 256]; K as usize],
+            w0: [[0; 256]; K as usize],
+            t1: [[0; 256]; K as usize],
+            t0: [[0; 256]; K as usize],
             c: Vec::default(),
         }
     }
@@ -191,7 +191,7 @@ fn parse_ones_vector(s: &str) -> IResult<&str, Vec<i8>> {
     Ok((s, byte_vec))
 }
 
-fn parse_matrix(s: &str) -> IResult<&str, Vec<Vec<Vec<PolynomialCoeff>>>> {
+fn parse_matrix(s: &str) -> IResult<&str, [[Polynomial; L as usize]; K as usize]> {
     let (s, char_vec) = delimited(
         char('('),
         separated_list0(tag(";\n     "), parse_bracket_lists),
@@ -200,16 +200,22 @@ fn parse_matrix(s: &str) -> IResult<&str, Vec<Vec<Vec<PolynomialCoeff>>>> {
 
     let mat = char_vec
         .iter()
-        .map(|v| -> Vec<Vec<PolynomialCoeff>> {
+        .map(|v| -> [Polynomial; L as usize] {
             v.iter()
-                .map(|v| -> Vec<PolynomialCoeff> {
+                .map(|v| -> Polynomial {
                     v.iter()
                         .map(|s| PolynomialCoeff::from_str_radix(s, 10).unwrap())
-                        .collect()
+                        .collect::<Vec<_>>()
+                        .try_into()
+                        .unwrap()
                 })
-                .collect()
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
 
     Ok((s, mat))
 }
@@ -218,7 +224,7 @@ fn parse_bracket_lists(s: &str) -> IResult<&str, Vec<Vec<&str>>> {
     separated_list0(tag(", "), parse_bracket_list)(s)
 }
 
-fn parse_poly_list(s: &str) -> IResult<&str, Vec<Vec<PolynomialCoeff>>> {
+fn parse_poly_list<const N: usize>(s: &str) -> IResult<&str, [Polynomial; N]> {
     let (s, char_vec) = delimited(
         char('('),
         separated_list0(pair(tag(",\n"), take_while(is_space)), parse_bracket_list),
@@ -227,12 +233,16 @@ fn parse_poly_list(s: &str) -> IResult<&str, Vec<Vec<PolynomialCoeff>>> {
 
     let mat = char_vec
         .iter()
-        .map(|v| -> Vec<PolynomialCoeff> {
+        .map(|v| -> Polynomial {
             v.iter()
                 .map(|s| PolynomialCoeff::from_str_radix(s, 10).unwrap())
-                .collect()
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
 
     Ok((s, mat))
 }

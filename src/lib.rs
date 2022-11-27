@@ -20,6 +20,7 @@ const SAMPLE_INTEGER_SIZE: usize = 3;
 const HALF_SEED_SIZE: usize = SEED_SIZE / 2;
 const GAMMA1: PolynomialCoeff = 1 << 19;
 const GAMMA2: PolynomialCoeff = (Q - 1) / 32;
+const D: PolynomialCoeff = 13;
 
 const ZETAS: [i32; POLYNOMIAL_DEGREE] = [
     0, 25847, -2608894, -518909, 237124, -777960, -876248, 466468, 1826347, 2353451, -359251,
@@ -231,10 +232,15 @@ pub fn ntt_sum(lpoly: Polynomial, rpoly: Polynomial) -> Polynomial {
         .unwrap()
 }
 
-pub fn make_w_vecs(
+pub fn make_w_and_t_vecs(
     a: &[[Polynomial; L as usize]; K as usize],
     mut y: [Polynomial; L as usize],
-) -> ([Polynomial; K as usize], [Polynomial; K as usize]) {
+) -> (
+    [Polynomial; K as usize],
+    [Polynomial; K as usize],
+    [Polynomial; K as usize],
+    [Polynomial; K as usize],
+) {
     y.iter_mut().for_each(to_ntt);
 
     let mut w: Vec<_> = a
@@ -253,8 +259,14 @@ pub fn make_w_vecs(
     w.iter_mut().for_each(caddq);
 
     let (w0, w1): (Vec<_>, Vec<_>) = w.iter().map(decompose_poly).unzip();
+    let (t0, t1): (Vec<_>, Vec<_>) = w.iter().map(power2round_poly).unzip();
 
-    (w0.try_into().unwrap(), w1.try_into().unwrap())
+    (
+        w0.try_into().unwrap(),
+        w1.try_into().unwrap(),
+        t0.try_into().unwrap(),
+        t1.try_into().unwrap(),
+    )
 }
 
 fn reduce_montgomery(n: PolynomialCoeff) -> PolynomialCoeff {
@@ -281,4 +293,14 @@ fn decompose_coeff(a: &PolynomialCoeff) -> (PolynomialCoeff, PolynomialCoeff) {
     a0 -= (((Q - 1) / 2 - a0) >> 31) & Q;
 
     (a0, a1)
+}
+
+fn power2round_poly(poly: &Polynomial) -> (Polynomial, Polynomial) {
+    let (poly0, poly1): (Vec<_>, Vec<_>) = poly.iter().map(power2round).unzip();
+    (poly0.try_into().unwrap(), poly1.try_into().unwrap())
+}
+
+fn power2round(coeff: &PolynomialCoeff) -> (PolynomialCoeff, PolynomialCoeff) {
+    let a1 = (coeff + (1 << (D - 1)) - 1) >> D;
+    (coeff - (a1 << D), a1)
 }

@@ -21,6 +21,7 @@ const HALF_SEED_SIZE: usize = SEED_SIZE / 2;
 const GAMMA1: PolynomialCoeff = 1 << 19;
 const GAMMA2: PolynomialCoeff = (Q - 1) / 32;
 const D: PolynomialCoeff = 13;
+const TAU: usize = 60;
 
 const ZETAS: [i32; POLYNOMIAL_DEGREE] = [
     0, 25847, -2608894, -518909, 237124, -777960, -876248, 466468, 1826347, 2353451, -359251,
@@ -303,4 +304,34 @@ fn power2round_poly(poly: &Polynomial) -> (Polynomial, Polynomial) {
 fn power2round(coeff: &PolynomialCoeff) -> (PolynomialCoeff, PolynomialCoeff) {
     let a1 = (coeff + (1 << (D - 1)) - 1) >> D;
     (coeff - (a1 << D), a1)
+}
+
+pub fn make_challenge(seed: &[u8; SEED_SIZE]) -> Polynomial {
+    const FIRST_TAU_BITS_MASK: u64 = (1 << TAU) - 1;
+
+    let mut hasher = sha3::Sha3::shake_256();
+    let mut sign_bits_buf = [0u8; size_of::<u64>()];
+    let mut retval: Polynomial = [0; POLYNOMIAL_DEGREE];
+
+    hasher.input(&seed[..HALF_SEED_SIZE]);
+    hasher.result(&mut sign_bits_buf);
+
+    let mut sign_bits = u64::from_le_bytes(sign_bits_buf) & FIRST_TAU_BITS_MASK;
+
+    for last_bit_index in POLYNOMIAL_DEGREE - TAU..POLYNOMIAL_DEGREE {
+        let chosen_bit_index = (0..)
+            .map(|_| {
+                let mut buf = [0u8; 1];
+                hasher.result(&mut buf);
+                buf[0] as usize
+            })
+            .find(|&bit_index| bit_index <= last_bit_index)
+            // We can unwrap safely since the iterator never ends
+            .unwrap();
+        retval[last_bit_index] = retval[chosen_bit_index];
+        retval[chosen_bit_index] = 1 - 2 * (sign_bits & 1) as PolynomialCoeff;
+        sign_bits >>= 1;
+    }
+
+    retval
 }

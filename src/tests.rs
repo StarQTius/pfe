@@ -72,3 +72,12 @@ fn test_make_w_and_t_vecs() {
         }
     }
 }
+
+#[test]
+fn test_make_challenge() {
+    let fixtures = fixtures::fixtures();
+
+    for (i, fixture) in fixtures.iter().enumerate() {
+        assert_eq!(fixture.c, make_challenge(&fixture.seed), "{}", i);
+    }
+}

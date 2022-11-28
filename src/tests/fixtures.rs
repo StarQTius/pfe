@@ -1,4 +1,4 @@
-use crate::{Polynomial, PolynomialCoeff, K, L, SEED_SIZE};
+use crate::{Polynomial, PolynomialCoeff, K, L, POLYNOMIAL_DEGREE, SEED_SIZE};
 
 use nom::{
     bytes::complete::{tag, take, take_until, take_while},
@@ -31,7 +31,7 @@ pub struct Fixture {
     pub w0: [Polynomial; K as usize],
     pub t1: [Polynomial; K as usize],
     pub t0: [Polynomial; K as usize],
-    pub c: Vec<i8>,
+    pub c: Polynomial,
 }
 
 impl Default for Fixture {
@@ -50,7 +50,7 @@ impl Default for Fixture {
             w0: [[0; 256]; K as usize],
             t1: [[0; 256]; K as usize],
             t0: [[0; 256]; K as usize],
-            c: Vec::default(),
+            c: [0; POLYNOMIAL_DEGREE],
         }
     }
 }
@@ -181,12 +181,14 @@ fn parse_byte_vector(s: &str) -> IResult<&str, Vec<u8>> {
     Ok((s, byte_vec))
 }
 
-fn parse_ones_vector(s: &str) -> IResult<&str, Vec<i8>> {
+fn parse_ones_vector(s: &str) -> IResult<&str, Polynomial> {
     let (s, char_vec) = parse_bracket_list(s)?;
     let byte_vec = char_vec
         .iter()
-        .map(|s| i8::from_str_radix(s, 10).unwrap())
-        .collect();
+        .map(|s| PolynomialCoeff::from_str_radix(s, 10).unwrap())
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
 
     Ok((s, byte_vec))
 }

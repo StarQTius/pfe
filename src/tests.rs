@@ -28,7 +28,7 @@ fn test_expand_s() {
         for (j, (lpoly, rpoly)) in fixture
             .s
             .iter()
-            .zip(expand_s(&fixture.seed).iter())
+            .zip(expand_s::<L>(&fixture.seed, 0).iter())
             .enumerate()
         {
             assert_eq!(lpoly, rpoly, "{} -- {}", i, j);

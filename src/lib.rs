@@ -8,8 +8,8 @@ mod tests;
 pub type PolynomialCoeff = i64;
 pub type Polynomial = [PolynomialCoeff; POLYNOMIAL_DEGREE];
 
-pub const K: u16 = 8;
-pub const L: u16 = 7;
+pub const K: usize = 8;
+pub const L: usize = 7;
 pub const SEED_SIZE: usize = 64;
 
 const Q: PolynomialCoeff = 8380417;
@@ -52,11 +52,11 @@ const ZETAS: [i32; POLYNOMIAL_DEGREE] = [
     -1362209, 3937738, 1400424, -846154, 1976782,
 ];
 
-pub fn expand_a(seed: &[u8; SEED_SIZE]) -> [[Polynomial; L as usize]; K as usize] {
+pub fn expand_a(seed: &[u8; SEED_SIZE]) -> [[Polynomial; L]; K] {
     let mut hasher = sha3::Sha3::shake_128();
     let mut block_buf = [0; size_of::<PolynomialCoeff>()];
 
-    iproduct!(0..K, 0..L)
+    iproduct!(0..K as u16, 0..L as u16)
         .map(|(i, j)| {
             hasher.reset();
             hasher.input(&seed[..HALF_SEED_SIZE]);
@@ -81,17 +81,17 @@ pub fn expand_a(seed: &[u8; SEED_SIZE]) -> [[Polynomial; L as usize]; K as usize
                 .try_into()
                 .unwrap()
         })
-        .collect::<Vec<[Polynomial; L as usize]>>()
+        .collect::<Vec<[Polynomial; L]>>()
         // `group_by()` should have resulted in an iterator of count `K`
         .try_into()
         .unwrap()
 }
 
-pub fn expand_s(seed: &[u8; SEED_SIZE]) -> [Polynomial; L as usize] {
+pub fn expand_s<const N: usize>(seed: &[u8; SEED_SIZE], nonce: u16) -> [Polynomial; N] {
     let mut hasher = sha3::Sha3::shake_256();
     let mut block_buf_opt: Option<[u8; 1]> = None;
 
-    (0..L)
+    (nonce..nonce + N as u16)
         .map(|nonce| {
             hasher.reset();
             hasher.input(&seed[..SEED_SIZE]);
@@ -118,11 +118,11 @@ pub fn expand_s(seed: &[u8; SEED_SIZE]) -> [Polynomial; L as usize] {
         .unwrap()
 }
 
-pub fn expand_y(seed: &[u8; SEED_SIZE]) -> [Polynomial; L as usize] {
+pub fn expand_y(seed: &[u8; SEED_SIZE]) -> [Polynomial; L] {
     let mut hasher = sha3::Sha3::shake_256();
     let mut block_buf = [0; 3];
 
-    (0..L)
+    (0..L as u16)
         .map(|nonce| {
             hasher.reset();
             hasher.input(&seed[..SEED_SIZE]);
@@ -234,13 +234,13 @@ pub fn ntt_sum(lpoly: Polynomial, rpoly: Polynomial) -> Polynomial {
 }
 
 pub fn make_w_and_t_vecs(
-    a: &[[Polynomial; L as usize]; K as usize],
-    mut y: [Polynomial; L as usize],
+    a: &[[Polynomial; L]; K],
+    mut y: [Polynomial; L],
 ) -> (
-    [Polynomial; K as usize],
-    [Polynomial; K as usize],
-    [Polynomial; K as usize],
-    [Polynomial; K as usize],
+    [Polynomial; K],
+    [Polynomial; K],
+    [Polynomial; K],
+    [Polynomial; K],
 ) {
     y.iter_mut().for_each(to_ntt);
 

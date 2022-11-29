@@ -7,11 +7,21 @@ mod tests;
 
 pub type PolynomialCoeff = i64;
 pub type Polynomial = [PolynomialCoeff; POLYNOMIAL_DEGREE];
+pub type PublicKey = [u8; PUBLIC_KEY_SIZE];
+pub type SecretKey = [u8; SECRET_KEY_SIZE];
 
 pub const K: usize = 8;
 pub const L: usize = 7;
 pub const SEED_SIZE: usize = 64;
 
+const PUBLIC_KEY_SIZE: usize = SEED_SIZE / 2 + K as usize * T1_PACKED_SIZE;
+const SECRET_KEY_SIZE: usize = 3 * SEED_SIZE / 2
+    + L as usize * ETA_PACKED_SIZE
+    + K as usize * ETA_PACKED_SIZE
+    + K * T0_PACKED_SIZE;
+const ETA_PACKED_SIZE: usize = 96;
+const T0_PACKED_SIZE: usize = 416;
+const T1_PACKED_SIZE: usize = 320;
 const Q: PolynomialCoeff = 8380417;
 const Q_MOD_2POW32_INVERSE: i32 = 58728449;
 const ETA: PolynomialCoeff = 2;
@@ -52,14 +62,113 @@ const ZETAS: [i32; POLYNOMIAL_DEGREE] = [
     -1362209, 3937738, 1400424, -846154, 1976782,
 ];
 
-pub fn expand_a(seed: &[u8; SEED_SIZE]) -> [[Polynomial; L]; K] {
+pub fn make_keys(mut byte_stream: impl Iterator<Item = u8>) -> Option<(PublicKey, SecretKey)> {
+    let mut hasher = sha3::Sha3::shake_256();
+    let mut rho = [0u8; SEED_SIZE / 2];
+    let mut rho_prime = [0u8; SEED_SIZE];
+    let mut key = [0u8; SEED_SIZE / 2];
+
+    let seed: [u8; SEED_SIZE / 2] = try_from_fn(|_| byte_stream.next())?;
+    hasher.input(&seed);
+    hasher.result(&mut rho);
+    hasher.result(&mut rho_prime);
+    hasher.result(&mut key);
+
+    let a = expand_a(&rho);
+    let s1 = expand_s::<L>(&rho_prime, 0);
+    let s2 = expand_s::<K>(&rho_prime, L as u16);
+    let mut s1_hat = s1;
+
+    s1_hat.iter_mut().for_each(to_ntt);
+
+    let mut t1 = ntt_matrix_product(&a, &s1_hat);
+
+    for (t1_poly, s2_poly) in t1.iter_mut().zip(s2.iter()) {
+        for coeff in t1_poly.iter_mut() {
+            *coeff = reduce_32(*coeff);
+        }
+
+        from_ntt(t1_poly);
+
+        for (t1_coeff, s2_coeff) in t1_poly.iter_mut().zip(s2_poly.iter()) {
+            *t1_coeff += s2_coeff;
+        }
+
+        caddq(t1_poly);
+    }
+
+    let (t0, t1): (Vec<_>, Vec<_>) = t1.iter().map(power2round_poly).unzip();
+    let (_t0, t1): ([Polynomial; K], [Polynomial; K]) =
+        (t0.try_into().unwrap(), t1.try_into().unwrap());
+
+    let pk = make_public_key(&rho, &t1);
+
+    /*let seed: [u8; SEED_SIZE / 2] = array::try_from_fn(|_| byte_stream.next())?;
+    let tr = [0; SEED_SIZE / 2];
+    hasher.reset();
+    hasher.input(&seed);
+    hasher.result(&mut tr);
+
+    pack sk*/
+
+    Some((pk, [0; SECRET_KEY_SIZE]))
+}
+
+fn try_from_fn<T, const N: usize>(mut f: impl FnMut(usize) -> Option<T>) -> Option<[T; N]>
+where
+    T: Default + Copy,
+{
+    let mut retval = [T::default(); N];
+
+    for (i, val) in retval.iter_mut().enumerate() {
+        *val = f(i)?;
+    }
+
+    Some(retval)
+}
+
+fn make_public_key(rho: &[u8; SEED_SIZE / 2], t1: &[Polynomial; K]) -> [u8; PUBLIC_KEY_SIZE] {
+    let mut retval = [0; PUBLIC_KEY_SIZE];
+
+    retval[..SEED_SIZE / 2].copy_from_slice(rho);
+
+    let t1_it = t1.iter().flat_map(|poly| poly.chunks(4));
+    let retval_it = retval[SEED_SIZE / 2..].chunks_mut(5);
+
+    for (t1_chunk, retval_chunk) in t1_it.zip(retval_it) {
+        retval_chunk[0] = t1_chunk[0] as u8;
+        retval_chunk[1] = ((t1_chunk[0] >> 8) | (t1_chunk[1] << 2)) as u8;
+        retval_chunk[2] = ((t1_chunk[1] >> 6) | (t1_chunk[2] << 4)) as u8;
+        retval_chunk[3] = ((t1_chunk[2] >> 4) | (t1_chunk[3] << 6)) as u8;
+        retval_chunk[4] = (t1_chunk[3] >> 2) as u8;
+    }
+
+    retval
+}
+
+fn ntt_matrix_product(a: &[[Polynomial; L]; K], u: &[Polynomial; L]) -> [Polynomial; K] {
+    a.iter()
+        .map(|line| ntt_dot_product(line, u))
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap()
+}
+
+fn ntt_dot_product(lvec: &[Polynomial; L], rvec: &[Polynomial; L]) -> Polynomial {
+    lvec.iter()
+        .zip(rvec.iter())
+        .map(|(lpoly, rpoly)| ntt_product(lpoly, rpoly))
+        .fold([0; POLYNOMIAL_DEGREE], ntt_sum)
+}
+
+pub fn expand_a(seed: &[u8; SEED_SIZE / 2]) -> [[Polynomial; L]; K] {
     let mut hasher = sha3::Sha3::shake_128();
     let mut block_buf = [0; size_of::<PolynomialCoeff>()];
 
     iproduct!(0..K as u16, 0..L as u16)
         .map(|(i, j)| {
             hasher.reset();
-            hasher.input(&seed[..HALF_SEED_SIZE]);
+            hasher.input(seed);
             hasher.input(&((i << 8) + j).to_le_bytes());
 
             (

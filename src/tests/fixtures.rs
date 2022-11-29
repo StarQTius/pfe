@@ -20,7 +20,7 @@ static mut FIXTURES: Vec<Fixture> = Vec::new();
 pub struct Fixture {
     pub count: u32,
     pub m: Vec<u8>,
-    pub pk: Vec<u8>,
+    pub pk: [u8; 32],
     pub sk: Vec<u8>,
     pub sig: Vec<u8>,
     pub seed: [u8; SEED_SIZE],
@@ -39,7 +39,7 @@ impl Default for Fixture {
         Fixture {
             count: 0,
             m: Vec::default(),
-            pk: Vec::default(),
+            pk: [0; 32],
             sk: Vec::default(),
             sig: Vec::default(),
             seed: [0; SEED_SIZE],
@@ -137,7 +137,7 @@ fn parse_fixture(s: &str) -> IResult<&str, Fixture> {
 
     let count = u32::from_str_radix(count, 10).unwrap();
     let m = parse_byte_vector(m)?.1;
-    let pk = parse_byte_vector(pk)?.1;
+    let pk = parse_byte_vector(pk)?.1.try_into().unwrap();
     let sk = parse_byte_vector(sk)?.1;
     let sig = parse_byte_vector(sig)?.1;
     let seed = parse_byte_vector(seed)?.1[..SEED_SIZE].try_into().unwrap();

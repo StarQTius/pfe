@@ -98,17 +98,21 @@ fn test_make_keys() {
         hasher_128.reset();
         hasher_128.input(&((i * 3 + 1) as u64).to_le_bytes());
         hasher_128.result(&mut byte_buf[..SEED_SIZE / 2]);
-        hasher_128.reset();
-        hasher_128.input(&((i * 3 + 2) as u64).to_le_bytes());
-        hasher_128.result(&mut byte_buf[SEED_SIZE / 2..]);
 
-        let (pk, _) = make_keys(byte_buf.into_iter()).unwrap();
+        let (pk, sk) = make_keys(byte_buf.into_iter()).unwrap();
         let mut pk_hash = [0; 32];
+        let mut sk_hash = [0; 32];
 
         hasher_256.reset();
         hasher_256.input(&pk);
         hasher_256.result(&mut pk_hash);
 
         assert_eq!(fixture.pk, pk_hash);
+
+        hasher_256.reset();
+        hasher_256.input(&sk);
+        hasher_256.result(&mut sk_hash);
+
+        assert_eq!(fixture.sk, sk_hash);
     }
 }

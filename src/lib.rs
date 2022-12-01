@@ -98,20 +98,19 @@ pub fn make_keys(mut byte_stream: impl Iterator<Item = u8>) -> Option<(PublicKey
     }
 
     let (t0, t1): (Vec<_>, Vec<_>) = t1.iter().map(power2round_poly).unzip();
-    let (_t0, t1): ([Polynomial; K], [Polynomial; K]) =
+    let (t0, t1): ([Polynomial; K], [Polynomial; K]) =
         (t0.try_into().unwrap(), t1.try_into().unwrap());
 
     let pk = make_public_key(&rho, &t1);
 
-    /*let seed: [u8; SEED_SIZE / 2] = array::try_from_fn(|_| byte_stream.next())?;
-    let tr = [0; SEED_SIZE / 2];
+    let mut tr = [0; SEED_SIZE / 2];
     hasher.reset();
-    hasher.input(&seed);
+    hasher.input(&pk);
     hasher.result(&mut tr);
 
-    pack sk*/
+    let sk = make_private_key(&rho, &tr, &key, &t0, &s1, &s2)?;
 
-    Some((pk, [0; SECRET_KEY_SIZE]))
+    Some((pk, sk))
 }
 
 fn try_from_fn<T, const N: usize>(mut f: impl FnMut(usize) -> Option<T>) -> Option<[T; N]>
@@ -125,6 +124,57 @@ where
     }
 
     Some(retval)
+}
+
+fn make_private_key(
+    &rho: &[u8; SEED_SIZE / 2],
+    &tr: &[u8; SEED_SIZE / 2],
+    &key: &[u8; SEED_SIZE / 2],
+    t0: &[Polynomial; K],
+    s1: &[Polynomial; L],
+    s2: &[Polynomial; K],
+) -> Option<SecretKey> {
+    let mut it = rho
+        .into_iter()
+        .chain(key)
+        .chain(tr)
+        .chain(s1.iter().flat_map(pack_eta_polynomial))
+        .chain(s2.iter().flat_map(pack_eta_polynomial))
+        .chain(t0.iter().flat_map(pack_t0_polynomial));
+
+    try_from_fn(|_| it.next())
+}
+
+fn pack_t0_polynomial(poly: &Polynomial) -> impl Iterator<Item = u8> + '_ {
+    poly.chunks(8).flat_map(|chunk| {
+        let tmp: [_; 8] = std::array::from_fn(|i| ((1 << (D - 1)) - chunk[i]) as u32);
+        [
+            tmp[0] as u8,
+            (tmp[0] >> 8) as u8 | (tmp[1] << 5) as u8,
+            (tmp[1] >> 3) as u8,
+            (tmp[1] >> 11) as u8 | (tmp[2] << 2) as u8,
+            (tmp[2] >> 6) as u8 | (tmp[3] << 7) as u8,
+            (tmp[3] >> 1) as u8,
+            (tmp[3] >> 9) as u8 | (tmp[4] << 4) as u8,
+            (tmp[4] >> 4) as u8,
+            (tmp[4] >> 12) as u8 | (tmp[5] << 1) as u8,
+            (tmp[5] >> 7) as u8 | (tmp[6] << 6) as u8,
+            (tmp[6] >> 2) as u8,
+            (tmp[6] >> 10) as u8 | (tmp[7] << 3) as u8,
+            (tmp[7] >> 5) as u8,
+        ]
+    })
+}
+
+fn pack_eta_polynomial(poly: &Polynomial) -> impl Iterator<Item = u8> + '_ {
+    poly.chunks(8).flat_map(|chunk| {
+        let tmp: [_; 8] = std::array::from_fn(|i| (ETA - chunk[i]) as u32);
+        [
+            tmp[0] as u8 | (tmp[1] << 3) as u8 | (tmp[2] << 6) as u8,
+            (tmp[2] >> 2) as u8 | (tmp[3] << 1) as u8 | (tmp[4] << 4) as u8 | (tmp[5] << 7) as u8,
+            (tmp[5] >> 1) as u8 | (tmp[6] << 2) as u8 | (tmp[7] << 5) as u8,
+        ]
+    })
 }
 
 fn make_public_key(rho: &[u8; SEED_SIZE / 2], t1: &[Polynomial; K]) -> [u8; PUBLIC_KEY_SIZE] {

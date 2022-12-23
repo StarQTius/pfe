@@ -12,7 +12,7 @@ use std::{
     io::{BufReader, Read},
 };
 
-const N: u32 = 100;
+const N: u32 = 25;
 const FIXTURE_TEXT_SIZE_MAX: u32 = 1000000;
 static mut FIXTURES: Vec<Fixture> = Vec::new();
 
@@ -21,8 +21,8 @@ pub struct Fixture {
     pub count: u32,
     pub m: Vec<u8>,
     pub pk: [u8; 32],
-    pub sk: Vec<u8>,
-    pub sig: Vec<u8>,
+    pub sk: [u8; 32],
+    pub sig: [u8; 32],
     pub seed: [u8; SEED_SIZE],
     pub a: [[Polynomial; L as usize]; K as usize],
     pub s: [Polynomial; L as usize],
@@ -40,8 +40,8 @@ impl Default for Fixture {
             count: 0,
             m: Vec::default(),
             pk: [0; 32],
-            sk: Vec::default(),
-            sig: Vec::default(),
+            sk: [0; 32],
+            sig: [0; 32],
             seed: [0; SEED_SIZE],
             a: [[[0; 256]; L as usize]; K as usize],
             s: [[0; 256]; L as usize],
@@ -138,8 +138,8 @@ fn parse_fixture(s: &str) -> IResult<&str, Fixture> {
     let count = u32::from_str_radix(count, 10).unwrap();
     let m = parse_byte_vector(m)?.1;
     let pk = parse_byte_vector(pk)?.1.try_into().unwrap();
-    let sk = parse_byte_vector(sk)?.1;
-    let sig = parse_byte_vector(sig)?.1;
+    let sk = parse_byte_vector(sk)?.1.try_into().unwrap();
+    let sig = parse_byte_vector(sig)?.1.try_into().unwrap();
     let seed = parse_byte_vector(seed)?.1[..SEED_SIZE].try_into().unwrap();
     let a = parse_matrix(a)?.1;
     let s_ = parse_poly_list(s_)?.1;

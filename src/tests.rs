@@ -48,7 +48,7 @@ fn test_expand_y() {
         for (j, (lpoly, rpoly)) in fixture
             .y
             .iter()
-            .zip(expand_y(&fixture.seed).iter())
+            .zip(expand_y(&fixture.seed, 0).iter())
             .enumerate()
         {
             assert_eq!(lpoly, rpoly, "{} -- {}", i, j);
@@ -82,7 +82,12 @@ fn test_make_challenge() {
     let fixtures = fixtures::fixtures();
 
     for (i, fixture) in fixtures.iter().enumerate() {
-        assert_eq!(fixture.c, make_challenge(&fixture.seed), "{}", i);
+        assert_eq!(
+            fixture.c,
+            make_challenge(&fixture.seed[..SEED_SIZE / 2]),
+            "{}",
+            i
+        );
     }
 }
 
@@ -114,5 +119,15 @@ fn test_make_keys() {
         hasher_256.result(&mut sk_hash);
 
         assert_eq!(fixture.sk, sk_hash);
+
+        // Not tested separately because fixtures only provide hashes of public and secret keys, so
+        // we reuse the keys we generated above
+
+        let signature = sign(&fixture.m, &sk);
+        let mut signature_hash = [0; 32];
+        hasher_256.reset();
+        hasher_256.input(&signature);
+        hasher_256.result(&mut signature_hash);
+        assert_eq!(signature_hash, fixture.sig, "{}", i);
     }
 }

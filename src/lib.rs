@@ -714,6 +714,8 @@ fn abs(n: PolynomialCoeff) -> PolynomialCoeff {
 }
 
 fn split_by_sizes<'a, const N: usize>(slice: &'a [u8], sizes: &[usize; N]) -> [&'a [u8]; N] {
+    assert!(sizes.iter().sum::<usize>() == slice.len());
+
     let (it1, it2) = sizes
         .iter()
         .scan(0, |sum, n| {
@@ -793,6 +795,193 @@ fn unpack_t0_polynomial(sk_slice: &[u8]) -> Option<Polynomial> {
                 ]
                 .into_iter()
                 .map(|n| (DBITS_MASK / 2 + 1) - (n & DBITS_MASK)),
+            )
+        })
+        .flatten();
+
+    try_from_it(it)
+}
+
+pub fn verify(msg: &[u8], signature: &Signature, pk: &PublicKey) -> bool {
+    let mut hasher = sha3::Sha3::shake_256();
+
+    let [rho, t1] = split_by_sizes(pk, &[SEED_SIZE / 2, K * T1_PACKED_SIZE]);
+    let mut t1: [_; K] = extract_vector(t1, unpack_t1_polynomial).unwrap();
+
+    let [challenge_seed, z, hint] = split_by_sizes(
+        signature,
+        &[SEED_SIZE / 2, L * POLYZ_PACKED_SIZE, POLYVECH_PACKED_SIZE],
+    );
+    let mut z = extract_vector(z, unpack_z_polynomial).unwrap();
+    if !z
+        .iter()
+        .flatten()
+        .all(|&coeff| abs(coeff) < GAMMA1 - BETA as PolynomialCoeff)
+    {
+        return false;
+    }
+
+    let hint = if let Some(hint) = unpack_hint(hint) {
+        hint
+    } else {
+        return false;
+    };
+
+    let mut mu = [0u8; SEED_SIZE / 2];
+    hasher.input(pk);
+    hasher.result(&mut mu);
+
+    hasher.reset();
+    hasher.input(&mu);
+    hasher.input(msg);
+
+    let mut mu = [0u8; SEED_SIZE];
+    hasher.result(&mut mu);
+
+    let mut challenge = make_challenge(challenge_seed);
+    let a = expand_a(rho);
+
+    z.iter_mut().for_each(to_ntt);
+
+    let w1 = ntt_matrix_product(&a, &z);
+
+    to_ntt(&mut challenge);
+    t1.iter_mut().flatten().for_each(|coeff| *coeff <<= D);
+    t1.iter_mut().for_each(to_ntt);
+    t1.iter_mut()
+        .for_each(|poly| *poly = ntt_product(&challenge, poly));
+
+    let mut w1 = try_from_it(
+        w1.iter()
+            .zip(t1.iter())
+            .map(|(&w1_poly, &t1_poly)| ntt_difference(w1_poly, t1_poly).map(reduce_32)),
+    )
+    .unwrap();
+    w1.iter_mut().for_each(from_ntt);
+    w1.iter_mut().for_each(caddq);
+    use_hint(&mut w1, &hint);
+
+    let packed_w1: [u8; POLYNOMIAL_DEGREE * K / 2] = try_from_it(
+        w1.iter()
+            .flat_map(|poly| poly.chunks(2).map(|slice| (slice[0] | slice[1] << 4) as u8)),
+    )
+    .unwrap();
+
+    let mut computed_challenge_seed = [0u8; SEED_SIZE / 2];
+    hasher.reset();
+    hasher.input(&mu);
+    hasher.input(&packed_w1);
+    hasher.result(&mut computed_challenge_seed);
+
+    computed_challenge_seed == challenge_seed
+}
+
+fn use_hint(w1: &mut [Polynomial; K], hint: &[[bool; POLYNOMIAL_DEGREE]; K]) {
+    let w1_it = w1.iter_mut().flatten();
+    let hint_it = hint.iter().flatten();
+
+    w1_it.zip(hint_it).for_each(|(w1_coeff, &hint_coeff)| {
+        let (a0, a1) = decompose_coeff(w1_coeff);
+        *w1_coeff = if hint_coeff {
+            (a1 + (if a0 > 0 { 1 } else { -1 })) & 15
+        } else {
+            a1
+        }
+    });
+}
+
+fn unpack_hint(packed_slice: &[u8]) -> Option<[[bool; POLYNOMIAL_DEGREE]; K]> {
+    if packed_slice.len() != POLYVECH_PACKED_SIZE {
+        return None;
+    }
+
+    let (one_indices, polynomial_indices) = packed_slice.split_at(OMEGA);
+    if !(polynomial_indices.len() == K
+        && polynomial_indices
+            .iter()
+            .all(|&i| (0..OMEGA).contains(&(i as usize))))
+    {
+        return None;
+    }
+
+    let (polynomial_indices_it1, polynomial_indices_it2) =
+        polynomial_indices.iter().map(|&i| i as usize).tee();
+    let one_indices_in_polynomial_it = once(0)
+        .chain(polynomial_indices_it1)
+        .zip(polynomial_indices_it2)
+        .map(|(start, end)| &one_indices[start..end]);
+
+    let retval_it = one_indices_in_polynomial_it.filter_map(|slice| {
+        if is_strictly_sorted(slice.iter()) {
+            let mut poly = [false; POLYNOMIAL_DEGREE];
+            slice.iter().for_each(|&i| poly[i as usize] = true);
+            Some(poly)
+        } else {
+            None
+        }
+    });
+
+    try_from_it(retval_it)
+}
+
+fn is_strictly_sorted<'a>(mut it: impl Iterator<Item = &'a u8>) -> bool {
+    let first = if let Some(&first) = it.next() {
+        first
+    } else {
+        return true;
+    };
+    it.try_fold(
+        first,
+        |prev, &curr| if prev < curr { Some(curr) } else { None },
+    )
+    .is_some()
+}
+
+fn unpack_z_polynomial(packed_slice: &[u8]) -> Option<Polynomial> {
+    const _20BITS_MASK: PolynomialCoeff = (1 << 20) - 1;
+    const SK_CHUNK_LENGTH: usize = 5;
+
+    assert!(packed_slice.len() == POLYZ_PACKED_SIZE);
+
+    let it = packed_slice
+        .chunks_exact(SK_CHUNK_LENGTH)
+        .filter_map(|chunk| {
+            let chunk: [_; SK_CHUNK_LENGTH] =
+                try_from_it(chunk.iter().map(|&x| x as PolynomialCoeff))?;
+            Some(
+                [
+                    chunk[0] | (chunk[1] << 8) | (chunk[2] << 16),
+                    (chunk[2] >> 4) | (chunk[3] << 4) | (chunk[4] << 12),
+                ]
+                .into_iter()
+                .map(|n| GAMMA1 - (n & _20BITS_MASK)),
+            )
+        })
+        .flatten();
+
+    try_from_it(it)
+}
+
+fn unpack_t1_polynomial(packed_slice: &[u8]) -> Option<Polynomial> {
+    const _10BITS_MASK: PolynomialCoeff = (1 << 10) - 1;
+    const SK_CHUNK_LENGTH: usize = 5;
+
+    assert!(packed_slice.len() == T1_PACKED_SIZE);
+
+    let it = packed_slice
+        .chunks_exact(SK_CHUNK_LENGTH)
+        .filter_map(|chunk| {
+            let chunk: [_; SK_CHUNK_LENGTH] =
+                try_from_it(chunk.iter().map(|&x| x as PolynomialCoeff))?;
+            Some(
+                [
+                    chunk[0] | (chunk[1] << 8),
+                    (chunk[1] >> 2) | (chunk[2] << 6),
+                    (chunk[2] >> 4) | (chunk[3] << 4),
+                    (chunk[3] >> 6) | (chunk[4] << 2),
+                ]
+                .into_iter()
+                .map(|n| n & _10BITS_MASK),
             )
         })
         .flatten();

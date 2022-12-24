@@ -129,5 +129,6 @@ fn test_make_keys() {
         hasher_256.input(&signature);
         hasher_256.result(&mut signature_hash);
         assert_eq!(signature_hash, fixture.sig, "{}", i);
+        assert!(verify(&fixture.m, &signature, &pk));
     }
 }

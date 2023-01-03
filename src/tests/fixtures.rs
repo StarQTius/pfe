@@ -1,5 +1,11 @@
-use crate::{Polynomial, PolynomialCoeff, K, L, POLYNOMIAL_DEGREE, SEED_SIZE};
+use crate::{
+    coefficient,
+    polynomial::{ntt::NTTPolynomial, plain::PlainPolynomial, NB_COEFFICIENTS},
+    vector::{Matrix, Vector},
+    TryCollectArray, K, L, SEED_SIZE,
+};
 
+use itertools::Itertools;
 use nom::{
     bytes::complete::{tag, take, take_until, take_while},
     character::complete::char,
@@ -24,34 +30,19 @@ pub struct Fixture {
     pub sk: [u8; 32],
     pub sig: [u8; 32],
     pub seed: [u8; SEED_SIZE],
-    pub a: [[Polynomial; L as usize]; K as usize],
-    pub s: [Polynomial; L as usize],
-    pub y: [Polynomial; L as usize],
-    pub w1: [Polynomial; K as usize],
-    pub w0: [Polynomial; K as usize],
-    pub t1: [Polynomial; K as usize],
-    pub t0: [Polynomial; K as usize],
-    pub c: Polynomial,
+    pub a: Matrix<NTTPolynomial, L, K>,
+    pub s: Vector<PlainPolynomial, L>,
+    pub y: Vector<PlainPolynomial, L>,
+    pub w1: Vector<PlainPolynomial, K>,
+    pub w0: Vector<PlainPolynomial, K>,
+    pub t1: Vector<PlainPolynomial, K>,
+    pub t0: Vector<PlainPolynomial, K>,
+    pub c: PlainPolynomial,
 }
 
-impl Default for Fixture {
-    fn default() -> Self {
-        Fixture {
-            count: 0,
-            m: Vec::default(),
-            pk: [0; 32],
-            sk: [0; 32],
-            sig: [0; 32],
-            seed: [0; SEED_SIZE],
-            a: [[[0; 256]; L as usize]; K as usize],
-            s: [[0; 256]; L as usize],
-            y: [[0; 256]; L as usize],
-            w1: [[0; 256]; K as usize],
-            w0: [[0; 256]; K as usize],
-            t1: [[0; 256]; K as usize],
-            t0: [[0; 256]; K as usize],
-            c: [0; POLYNOMIAL_DEGREE],
-        }
+impl Fixture {
+    pub fn half_seed(&self) -> &[u8; SEED_SIZE / 2] {
+        self.seed[0..SEED_SIZE / 2].try_into().unwrap()
     }
 }
 
@@ -68,7 +59,7 @@ unsafe fn make_fixtures() {
     buf.read_to_string(&mut s).unwrap();
 
     FIXTURES = (0..N)
-        .scan((s.as_str(), Fixture::default()), |(s, _), _| {
+        .scan(s.as_str(), |s, _| {
             let (remainder, fixture) = parse_fixture(s).ok()?;
             *s = remainder;
             Some(fixture)
@@ -181,72 +172,69 @@ fn parse_byte_vector(s: &str) -> IResult<&str, Vec<u8>> {
     Ok((s, byte_vec))
 }
 
-fn parse_ones_vector(s: &str) -> IResult<&str, Polynomial> {
+fn parse_ones_vector(s: &str) -> IResult<&str, PlainPolynomial> {
     let (s, char_vec) = parse_bracket_list(s)?;
-    let byte_vec = char_vec
-        .iter()
-        .map(|s| PolynomialCoeff::from_str_radix(s, 10).unwrap())
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
+    let retval_it = char_vec
+        .into_iter()
+        .map(|s| coefficient::Coefficient::from_str_radix(s, 10).unwrap());
 
-    Ok((s, byte_vec))
+    Ok((s, retval_it.try_collect_array().unwrap().into()))
 }
 
-fn parse_matrix(s: &str) -> IResult<&str, [[Polynomial; L as usize]; K as usize]> {
+fn parse_matrix(s: &str) -> IResult<&str, Matrix<NTTPolynomial, L, K>> {
     let (s, char_vec) = delimited(
         char('('),
         separated_list0(tag(";\n     "), parse_bracket_lists),
         char(')'),
     )(s)?;
 
-    let mat = char_vec
-        .iter()
-        .map(|v| -> [Polynomial; L as usize] {
-            v.iter()
-                .map(|v| -> Polynomial {
-                    v.iter()
-                        .map(|s| PolynomialCoeff::from_str_radix(s, 10).unwrap())
-                        .collect::<Vec<_>>()
-                        .try_into()
-                        .unwrap()
-                })
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap()
-        })
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
+    let coeff_it = char_vec
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|s| coefficient::Coefficient::from_str_radix(s, 10).unwrap());
 
-    Ok((s, mat))
+    let polynomial_chunks = coeff_it.chunks(NB_COEFFICIENTS);
+
+    let polynomial_it = polynomial_chunks
+        .into_iter()
+        .map(|it| it.try_collect_array().unwrap())
+        .map(NTTPolynomial::from);
+
+    let vector_chunks = polynomial_it.chunks(L);
+
+    let vector_it = vector_chunks
+        .into_iter()
+        .map(|it| it.try_collect_array().unwrap())
+        .map(Vector::from);
+
+    Ok((s, vector_it.try_collect_array().unwrap().into()))
 }
 
 fn parse_bracket_lists(s: &str) -> IResult<&str, Vec<Vec<&str>>> {
     separated_list0(tag(", "), parse_bracket_list)(s)
 }
 
-fn parse_poly_list<const N: usize>(s: &str) -> IResult<&str, [Polynomial; N]> {
+fn parse_poly_list<const N: usize>(s: &str) -> IResult<&str, Vector<PlainPolynomial, N>> {
     let (s, char_vec) = delimited(
         char('('),
         separated_list0(pair(tag(",\n"), take_while(is_space)), parse_bracket_list),
         char(')'),
     )(s)?;
 
-    let mat = char_vec
-        .iter()
-        .map(|v| -> Polynomial {
-            v.iter()
-                .map(|s| PolynomialCoeff::from_str_radix(s, 10).unwrap())
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap()
-        })
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
+    let coeff_it = char_vec
+        .into_iter()
+        .flatten()
+        .map(|s| coefficient::Coefficient::from_str_radix(s, 10).unwrap());
 
-    Ok((s, mat))
+    let polynomial_chunks = coeff_it.chunks(NB_COEFFICIENTS);
+
+    let polynomial_it = polynomial_chunks
+        .into_iter()
+        .map(|it| it.try_collect_array().unwrap())
+        .map(PlainPolynomial::from);
+
+    Ok((s, polynomial_it.try_collect_array().unwrap().into()))
 }
 
 fn parse_bracket_list(s: &str) -> IResult<&str, Vec<&str>> {

@@ -1,17 +1,26 @@
+use crate::packing::Pack;
+use coefficient::Coefficient;
 use crypto::{digest::Digest, sha3};
-use itertools::{iproduct, Itertools};
+use itertools::Itertools;
+use polynomial::{ntt::NTTPolynomial, plain::PlainPolynomial, NB_COEFFICIENTS};
 use std::{
     array::from_fn,
-    iter::{once, repeat, Iterator},
+    iter::{once, zip, Iterator},
     mem::{size_of, MaybeUninit},
-    num::Wrapping,
 };
+use vector::{Matrix, Vector};
+
+mod array_math;
+mod coefficient;
+mod expand;
+mod packing;
+mod polynomial;
+mod vector;
 
 #[cfg(test)]
 mod tests;
 
-pub type PolynomialCoeff = i64;
-pub type Polynomial = [PolynomialCoeff; POLYNOMIAL_DEGREE];
+pub type Polynomial = [coefficient::Coefficient; POLYNOMIAL_DEGREE];
 pub type PublicKey = [u8; PUBLIC_KEY_SIZE];
 pub type SecretKey = [u8; SECRET_KEY_SIZE];
 pub type Signature = [u8; SIGNATURE_SIZE];
@@ -19,6 +28,8 @@ pub type Signature = [u8; SIGNATURE_SIZE];
 pub const K: usize = 8;
 pub const L: usize = 7;
 pub const SEED_SIZE: usize = 64;
+const Q: coefficient::Coefficient = 8380417;
+const Q_MOD_2POW32_INVERSE: coefficient::Coefficient = 58728449;
 
 const PUBLIC_KEY_SIZE: usize = SEED_SIZE / 2 + K as usize * T1_PACKED_SIZE;
 const SECRET_KEY_SIZE: usize = 3 * SEED_SIZE / 2
@@ -26,461 +37,148 @@ const SECRET_KEY_SIZE: usize = 3 * SEED_SIZE / 2
     + K as usize * ETA_PACKED_SIZE
     + K * T0_PACKED_SIZE;
 const OMEGA: usize = 75;
-const BETA: usize = 120;
+const BETA: Coefficient = 120;
 const ETA_PACKED_SIZE: usize = 96;
 const T0_PACKED_SIZE: usize = 416;
 const T1_PACKED_SIZE: usize = 320;
 const POLYZ_PACKED_SIZE: usize = 640;
 const POLYVECH_PACKED_SIZE: usize = OMEGA + K;
-const Q: PolynomialCoeff = 8380417;
-const Q_MOD_2POW32_INVERSE: i32 = 58728449;
-const ETA: PolynomialCoeff = 2;
+const ETA: coefficient::Coefficient = 2;
 const POLYNOMIAL_DEGREE: usize = 256;
-const SAMPLE_INTEGER_SIZE: usize = 3;
-const GAMMA1: PolynomialCoeff = 1 << 19;
-const GAMMA2: PolynomialCoeff = (Q - 1) / 32;
-const D: PolynomialCoeff = 13;
+// const SAMPLE_INTEGER_SIZE: usize = 3;
+const GAMMA1: coefficient::Coefficient = 1 << 19;
+const GAMMA2: coefficient::Coefficient = (Q - 1) / 32;
+const D: coefficient::Coefficient = 13;
 const TAU: usize = 60;
 const SIGNATURE_SIZE: usize = SEED_SIZE / 2 + L * POLYZ_PACKED_SIZE + POLYVECH_PACKED_SIZE;
 
-const ZETAS: [i32; POLYNOMIAL_DEGREE] = [
-    0, 25847, -2608894, -518909, 237124, -777960, -876248, 466468, 1826347, 2353451, -359251,
-    -2091905, 3119733, -2884855, 3111497, 2680103, 2725464, 1024112, -1079900, 3585928, -549488,
-    -1119584, 2619752, -2108549, -2118186, -3859737, -1399561, -3277672, 1757237, -19422, 4010497,
-    280005, 2706023, 95776, 3077325, 3530437, -1661693, -3592148, -2537516, 3915439, -3861115,
-    -3043716, 3574422, -2867647, 3539968, -300467, 2348700, -539299, -1699267, -1643818, 3505694,
-    -3821735, 3507263, -2140649, -1600420, 3699596, 811944, 531354, 954230, 3881043, 3900724,
-    -2556880, 2071892, -2797779, -3930395, -1528703, -3677745, -3041255, -1452451, 3475950,
-    2176455, -1585221, -1257611, 1939314, -4083598, -1000202, -3190144, -3157330, -3632928, 126922,
-    3412210, -983419, 2147896, 2715295, -2967645, -3693493, -411027, -2477047, -671102, -1228525,
-    -22981, -1308169, -381987, 1349076, 1852771, -1430430, -3343383, 264944, 508951, 3097992,
-    44288, -1100098, 904516, 3958618, -3724342, -8578, 1653064, -3249728, 2389356, -210977, 759969,
-    -1316856, 189548, -3553272, 3159746, -1851402, -2409325, -177440, 1315589, 1341330, 1285669,
-    -1584928, -812732, -1439742, -3019102, -3881060, -3628969, 3839961, 2091667, 3407706, 2316500,
-    3817976, -3342478, 2244091, -2446433, -3562462, 266997, 2434439, -1235728, 3513181, -3520352,
-    -3759364, -1197226, -3193378, 900702, 1859098, 909542, 819034, 495491, -1613174, -43260,
-    -522500, -655327, -3122442, 2031748, 3207046, -3556995, -525098, -768622, -3595838, 342297,
-    286988, -2437823, 4108315, 3437287, -3342277, 1735879, 203044, 2842341, 2691481, -2590150,
-    1265009, 4055324, 1247620, 2486353, 1595974, -3767016, 1250494, 2635921, -3548272, -2994039,
-    1869119, 1903435, -1050970, -1333058, 1237275, -3318210, -1430225, -451100, 1312455, 3306115,
-    -1962642, -1279661, 1917081, -2546312, -1374803, 1500165, 777191, 2235880, 3406031, -542412,
-    -2831860, -1671176, -1846953, -2584293, -3724270, 594136, -3776993, -2013608, 2432395, 2454455,
-    -164721, 1957272, 3369112, 185531, -1207385, -3183426, 162844, 1616392, 3014001, 810149,
-    1652634, -3694233, -1799107, -3038916, 3523897, 3866901, 269760, 2213111, -975884, 1717735,
-    472078, -426683, 1723600, -1803090, 1910376, -1667432, -1104333, -260646, -3833893, -2939036,
-    -2235985, -420899, -2286327, 183443, -976891, 1612842, -3545687, -554416, 3919660, -48306,
-    -1362209, 3937738, 1400424, -846154, 1976782,
-];
-
-pub fn make_keys(mut byte_stream: impl Iterator<Item = u8>) -> Option<(PublicKey, SecretKey)> {
+pub fn make_keys(byte_stream: impl Iterator<Item = u8>) -> Option<(PublicKey, SecretKey)> {
     let mut hasher = sha3::Sha3::shake_256();
     let mut rho = [0u8; SEED_SIZE / 2];
     let mut rho_prime = [0u8; SEED_SIZE];
     let mut key = [0u8; SEED_SIZE / 2];
 
-    let seed: [u8; SEED_SIZE / 2] = try_from_fn(|_| byte_stream.next())?;
+    let seed: [u8; SEED_SIZE / 2] = byte_stream.try_collect_array()?;
     hasher.input(&seed);
     hasher.result(&mut rho);
     hasher.result(&mut rho_prime);
     hasher.result(&mut key);
 
-    let a = expand_a(&rho);
-    let s1 = expand_s::<L>(&rho_prime, 0);
-    let s2 = expand_s::<K>(&rho_prime, L as u16);
-    let mut s1_hat = s1;
+    let a = expand::expand_a(&rho);
+    let s1 = expand::expand_s::<L>(&rho_prime, 0);
+    let s2 = expand::expand_s::<K>(&rho_prime, L as u16);
+    let (t0, t1) = (make_w(&a, &s1.clone().into_ntt()) + s2.clone()).power2round();
 
-    s1_hat.iter_mut().for_each(to_ntt);
-
-    let mut t1 = ntt_matrix_product(&a, &s1_hat);
-
-    for (t1_poly, s2_poly) in t1.iter_mut().zip(s2.iter()) {
-        for coeff in t1_poly.iter_mut() {
-            *coeff = reduce_32(*coeff);
-        }
-
-        from_ntt(t1_poly);
-
-        for (t1_coeff, s2_coeff) in t1_poly.iter_mut().zip(s2_poly.iter()) {
-            *t1_coeff += s2_coeff;
-        }
-
-        caddq(t1_poly);
-    }
-
-    let (t0, t1): (Vec<_>, Vec<_>) = t1.iter().map(power2round_poly).unzip();
-    let (t0, t1): ([Polynomial; K], [Polynomial; K]) =
-        (t0.try_into().unwrap(), t1.try_into().unwrap());
-
-    let pk = make_public_key(&rho, &t1);
+    let pk = pack_public_key(&rho, t1);
 
     let mut tr = [0; SEED_SIZE / 2];
     hasher.reset();
     hasher.input(&pk);
     hasher.result(&mut tr);
 
-    let sk = make_private_key(&rho, &tr, &key, &t0, &s1, &s2)?;
+    let sk = make_private_key(&rho, &tr, &key, t0, s1, s2)?;
 
     Some((pk, sk))
 }
 
-fn try_from_fn<T, const N: usize>(mut f: impl FnMut(usize) -> Option<T>) -> Option<[T; N]>
-where
-    T: Copy + Sized,
-{
-    let mut retval = [MaybeUninit::uninit(); N];
-
-    for (i, val) in retval.iter_mut().enumerate() {
-        val.write(f(i)?);
-    }
-
-    unsafe { Some(from_fn(|i| retval[i].assume_init())) }
-}
-
 fn make_private_key(
-    &rho: &[u8; SEED_SIZE / 2],
-    &tr: &[u8; SEED_SIZE / 2],
-    &key: &[u8; SEED_SIZE / 2],
-    t0: &[Polynomial; K],
-    s1: &[Polynomial; L],
-    s2: &[Polynomial; K],
+    rho: &[u8; SEED_SIZE / 2],
+    tr: &[u8; SEED_SIZE / 2],
+    key: &[u8; SEED_SIZE / 2],
+    t0: Vector<PlainPolynomial, K>,
+    s1: Vector<PlainPolynomial, L>,
+    s2: Vector<PlainPolynomial, K>,
 ) -> Option<SecretKey> {
-    let mut it = rho
-        .into_iter()
-        .chain(key)
-        .chain(tr)
-        .chain(s1.iter().flat_map(pack_eta_polynomial))
-        .chain(s2.iter().flat_map(pack_eta_polynomial))
-        .chain(t0.iter().flat_map(pack_t0_polynomial));
+    let mut retval = [0; SECRET_KEY_SIZE];
 
-    try_from_fn(|_| it.next())
+    let retval_slices = retval.partition_mut(&[
+        SEED_SIZE / 2,
+        SEED_SIZE / 2,
+        SEED_SIZE / 2,
+        L * ETA_PACKED_SIZE,
+        K * ETA_PACKED_SIZE,
+        K * T0_PACKED_SIZE,
+    ]);
+
+    let packed_t0: [_; K * T0_PACKED_SIZE] = t0.pack(&t0_packer);
+    let packed_s1: [_; L * ETA_PACKED_SIZE] = s1.pack(&eta_packer);
+    let packed_s2: [_; K * ETA_PACKED_SIZE] = s2.pack(&eta_packer);
+
+    retval_slices[0].copy_from_slice(rho);
+    retval_slices[1].copy_from_slice(key);
+    retval_slices[2].copy_from_slice(tr);
+    retval_slices[3].copy_from_slice(&packed_s1);
+    retval_slices[4].copy_from_slice(&packed_s2);
+    retval_slices[5].copy_from_slice(&packed_t0);
+
+    Some(retval)
 }
 
-fn pack_t0_polynomial(poly: &Polynomial) -> impl Iterator<Item = u8> + '_ {
-    poly.chunks(8).flat_map(|chunk| {
-        let tmp: [_; 8] = std::array::from_fn(|i| ((1 << (D - 1)) - chunk[i]) as u32);
+fn t0_packer(chunk: &[Coefficient; 8]) -> [u8; 13] {
+    let chunk = chunk.map(|coeff| (1 << (D - 1)) - coeff);
+
+    [
+        chunk[0],
+        (chunk[0] >> 8) | (chunk[1] << 5),
+        (chunk[1] >> 3),
+        (chunk[1] >> 11) | (chunk[2] << 2),
+        (chunk[2] >> 6) | (chunk[3] << 7),
+        (chunk[3] >> 1),
+        (chunk[3] >> 9) | (chunk[4] << 4),
+        (chunk[4] >> 4),
+        (chunk[4] >> 12) | (chunk[5] << 1),
+        (chunk[5] >> 7) | (chunk[6] << 6),
+        (chunk[6] >> 2),
+        (chunk[6] >> 10) | (chunk[7] << 3),
+        (chunk[7] >> 5),
+    ]
+    .map(|coeff| coeff as u8)
+}
+
+fn eta_packer(chunk: &[Coefficient; 8]) -> [u8; 3] {
+    let chunk = chunk.map(|coeff| ETA - coeff);
+
+    [
+        chunk[0] | (chunk[1] << 3) | (chunk[2] << 6),
+        (chunk[2] >> 2) | (chunk[3] << 1) | (chunk[4] << 4) | (chunk[5] << 7),
+        (chunk[5] >> 1) | (chunk[6] << 2) | (chunk[7] << 5),
+    ]
+    .map(|coeff| coeff as u8)
+}
+
+fn pack_public_key(rho: &[u8; SEED_SIZE / 2], t1: Vector<PlainPolynomial, K>) -> PublicKey {
+    let packed_t1: [_; K * T1_PACKED_SIZE] = t1.pack(&|chunk: &[Coefficient; 4]| {
         [
-            tmp[0] as u8,
-            (tmp[0] >> 8) as u8 | (tmp[1] << 5) as u8,
-            (tmp[1] >> 3) as u8,
-            (tmp[1] >> 11) as u8 | (tmp[2] << 2) as u8,
-            (tmp[2] >> 6) as u8 | (tmp[3] << 7) as u8,
-            (tmp[3] >> 1) as u8,
-            (tmp[3] >> 9) as u8 | (tmp[4] << 4) as u8,
-            (tmp[4] >> 4) as u8,
-            (tmp[4] >> 12) as u8 | (tmp[5] << 1) as u8,
-            (tmp[5] >> 7) as u8 | (tmp[6] << 6) as u8,
-            (tmp[6] >> 2) as u8,
-            (tmp[6] >> 10) as u8 | (tmp[7] << 3) as u8,
-            (tmp[7] >> 5) as u8,
+            chunk[0],
+            chunk[0] >> 8 | chunk[1] << 2,
+            chunk[1] >> 6 | chunk[2] << 4,
+            chunk[2] >> 4 | chunk[3] << 6,
+            chunk[3] >> 2,
         ]
-    })
-}
+        .map(|n| n as u8)
+    });
 
-fn pack_eta_polynomial(poly: &Polynomial) -> impl Iterator<Item = u8> + '_ {
-    poly.chunks(8).flat_map(|chunk| {
-        let tmp: [_; 8] = std::array::from_fn(|i| (ETA - chunk[i]) as u32);
-        [
-            tmp[0] as u8 | (tmp[1] << 3) as u8 | (tmp[2] << 6) as u8,
-            (tmp[2] >> 2) as u8 | (tmp[3] << 1) as u8 | (tmp[4] << 4) as u8 | (tmp[5] << 7) as u8,
-            (tmp[5] >> 1) as u8 | (tmp[6] << 2) as u8 | (tmp[7] << 5) as u8,
-        ]
-    })
-}
-
-fn make_public_key(rho: &[u8; SEED_SIZE / 2], t1: &[Polynomial; K]) -> [u8; PUBLIC_KEY_SIZE] {
     let mut retval = [0; PUBLIC_KEY_SIZE];
 
     retval[..SEED_SIZE / 2].copy_from_slice(rho);
-
-    let t1_it = t1.iter().flat_map(|poly| poly.chunks(4));
-    let retval_it = retval[SEED_SIZE / 2..].chunks_mut(5);
-
-    for (t1_chunk, retval_chunk) in t1_it.zip(retval_it) {
-        retval_chunk[0] = t1_chunk[0] as u8;
-        retval_chunk[1] = ((t1_chunk[0] >> 8) | (t1_chunk[1] << 2)) as u8;
-        retval_chunk[2] = ((t1_chunk[1] >> 6) | (t1_chunk[2] << 4)) as u8;
-        retval_chunk[3] = ((t1_chunk[2] >> 4) | (t1_chunk[3] << 6)) as u8;
-        retval_chunk[4] = (t1_chunk[3] >> 2) as u8;
-    }
+    retval[SEED_SIZE / 2..].copy_from_slice(&packed_t1);
 
     retval
 }
 
-fn ntt_matrix_product(a: &[[Polynomial; L]; K], u: &[Polynomial; L]) -> [Polynomial; K] {
-    a.iter()
-        .map(|line| ntt_dot_product(line, u))
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap()
+fn make_w(
+    a: &Matrix<NTTPolynomial, L, K>,
+    y: &Vector<NTTPolynomial, L>,
+) -> Vector<PlainPolynomial, K> {
+    (a * y).reduce_32().into_plain().caddq()
 }
 
-fn ntt_dot_product(lvec: &[Polynomial; L], rvec: &[Polynomial; L]) -> Polynomial {
-    lvec.iter()
-        .zip(rvec.iter())
-        .map(|(lpoly, rpoly)| ntt_product(lpoly, rpoly))
-        .fold([0; POLYNOMIAL_DEGREE], ntt_sum)
-}
-
-pub fn expand_a(seed: &[u8]) -> [[Polynomial; L]; K] {
-    let mut hasher = sha3::Sha3::shake_128();
-    let mut block_buf = [0; size_of::<PolynomialCoeff>()];
-
-    iproduct!(0..K as u16, 0..L as u16)
-        .map(|(i, j)| {
-            hasher.reset();
-            hasher.input(seed);
-            hasher.input(&((i << 8) + j).to_le_bytes());
-
-            (
-                i,
-                expand_polynomial(0, Q - 1, |_| {
-                    hasher.result(&mut block_buf[..SAMPLE_INTEGER_SIZE]);
-                    block_buf[SAMPLE_INTEGER_SIZE - 1] &= 0x7f;
-
-                    PolynomialCoeff::from_le_bytes(block_buf)
-                }),
-            )
-        })
-        .group_by(|(i, _)| *i)
-        .into_iter()
-        .map(|(_, it)| {
-            it.map(|(_, poly)| poly)
-                .collect::<Vec<Polynomial>>()
-                // `group_by()` should have resulted in an iterator of iterators each of count `L`
-                .try_into()
-                .unwrap()
-        })
-        .collect::<Vec<[Polynomial; L]>>()
-        // `group_by()` should have resulted in an iterator of count `K`
-        .try_into()
-        .unwrap()
-}
-
-pub fn expand_s<const N: usize>(seed: &[u8; SEED_SIZE], nonce: u16) -> [Polynomial; N] {
-    let mut hasher = sha3::Sha3::shake_256();
-    let mut block_buf_opt: Option<[u8; 1]> = None;
-
-    (nonce..nonce + N as u16)
-        .map(|nonce| {
-            hasher.reset();
-            hasher.input(&seed[..SEED_SIZE]);
-            hasher.input(&nonce.to_le_bytes());
-            block_buf_opt = None;
-
-            expand_polynomial(0, 14, |_| match block_buf_opt {
-                None => {
-                    let mut block_buf = [0; 1];
-                    hasher.result(&mut block_buf);
-                    block_buf_opt = Some(block_buf);
-                    (block_buf[0] & 0xf) as PolynomialCoeff
-                }
-                Some(block_buf) => {
-                    block_buf_opt = None;
-                    (block_buf[0] >> 4) as PolynomialCoeff
-                }
-            })
-            .map(|coeff| ETA - (coeff % (2 * ETA + 1)))
-        })
-        .collect::<Vec<Polynomial>>()
-        // Should not fail since we are iterating over `L` elements
-        .try_into()
-        .unwrap()
-}
-
-pub fn expand_y(seed: &[u8; SEED_SIZE], nonce: u16) -> [Polynomial; L] {
-    let mut hasher = sha3::Sha3::shake_256();
-    let mut block_buf = [0; 3];
-
-    (L as u16 * nonce..L as u16 * (nonce + 1))
-        .map(|nonce| {
-            hasher.reset();
-            hasher.input(&seed[..SEED_SIZE]);
-            hasher.input(&nonce.to_le_bytes());
-
-            expand_polynomial(1 - GAMMA1, GAMMA1, |i| {
-                let k = 4 * (i % 2);
-
-                if k == 0 {
-                    hasher.result(&mut block_buf);
-                } else {
-                    block_buf[0] = block_buf[2];
-                    hasher.result(&mut block_buf[1..]);
-                }
-
-                let mut coeff = (block_buf[0] as PolynomialCoeff) >> k;
-                coeff |= (block_buf[1] as PolynomialCoeff) << (8 - k);
-                coeff |= (block_buf[2] as PolynomialCoeff) << (16 - k);
-                coeff &= 0xfffff;
-                GAMMA1 - coeff
-            })
-        })
-        .collect::<Vec<Polynomial>>()
-        // Should not fail since we are iterating over `L` elements
-        .try_into()
-        .unwrap()
-}
-
-fn expand_polynomial(
-    inf: PolynomialCoeff,
-    sup: PolynomialCoeff,
-    generator: impl FnMut(i32) -> PolynomialCoeff,
-) -> Polynomial {
-    (0..)
-        .map(generator)
-        .filter(|coeff| &inf <= coeff && coeff <= &sup)
-        .take(POLYNOMIAL_DEGREE)
-        .collect::<Vec<PolynomialCoeff>>()
-        // Should not fail since we took exactly `POLYNOMIAL_DEGREE` elements
-        .try_into()
-        .unwrap()
-}
-
-pub fn to_ntt(poly: &mut Polynomial) {
-    let poly_len = poly.len();
-    let mut zeta_it = ZETAS[1..].iter();
-
-    for chunk_size in (0..8).map(|n| poly_len >> (n + 1)) {
-        let double_chunks_it = poly.chunks_mut(2 * chunk_size);
-        for double_chunks in double_chunks_it {
-            let zeta = *zeta_it.next().unwrap() as i64;
-            let (lchunk, rchunk) = double_chunks.split_at_mut(chunk_size);
-            for (lx, rx) in lchunk.iter_mut().zip(rchunk) {
-                let tmp = reduce_montgomery(*rx * zeta);
-                *rx = *lx - tmp;
-                *lx += tmp;
-            }
-        }
-    }
-}
-
-pub fn from_ntt(ntt_poly: &mut Polynomial) {
-    let f = 41978;
-    let mut zeta_it = ZETAS.iter().rev();
-
-    for chunk_size in (0..8).map(|n| 1 << n) {
-        let double_chunks_it = ntt_poly.chunks_mut(2 * chunk_size);
-        for double_chunks in double_chunks_it {
-            let zeta = *zeta_it.next().unwrap() as i64;
-            let (lchunk, rchunk) = double_chunks.split_at_mut(chunk_size);
-            for (lx, rx) in lchunk.iter_mut().zip(rchunk) {
-                let tmp = *lx;
-                *lx = tmp + *rx;
-                *rx = tmp - *rx;
-                *rx = reduce_montgomery(*rx * -zeta);
-            }
-        }
-    }
-
-    for coeff in ntt_poly {
-        *coeff = reduce_montgomery(*coeff * f);
-    }
-}
-
-pub fn caddq(poly: &mut Polynomial) {
-    for neg_val in poly.iter_mut().filter(|&&mut val| val < 0) {
-        *neg_val += Q;
-    }
-}
-
-pub fn ntt_product(lpoly: &Polynomial, rpoly: &Polynomial) -> Polynomial {
-    lpoly
-        .iter()
-        .zip(rpoly)
-        .map(|(lhs, rhs)| reduce_montgomery(lhs * rhs))
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap()
-}
-
-pub fn ntt_sum(lpoly: Polynomial, rpoly: Polynomial) -> Polynomial {
-    lpoly
-        .iter()
-        .zip(rpoly)
-        .map(|(lhs, rhs)| lhs + rhs)
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap()
-}
-
-pub fn make_w_and_t_vecs(
-    a: &[[Polynomial; L]; K],
-    mut y: [Polynomial; L],
-) -> (
-    [Polynomial; K],
-    [Polynomial; K],
-    [Polynomial; K],
-    [Polynomial; K],
-) {
-    y.iter_mut().for_each(to_ntt);
-
-    let mut w: Vec<_> = a
-        .iter()
-        .map(|line_vec| {
-            line_vec
-                .iter()
-                .zip(y)
-                .map(|(ntt_lpoly, ntt_rpoly)| ntt_product(ntt_lpoly, &ntt_rpoly))
-                .fold([0 as PolynomialCoeff; 256], ntt_sum)
-                .map(reduce_32)
-        })
-        .collect();
-
-    w.iter_mut().for_each(from_ntt);
-    w.iter_mut().for_each(caddq);
-
-    let (w0, w1): (Vec<_>, Vec<_>) = w.iter().map(decompose_poly).unzip();
-    let (t0, t1): (Vec<_>, Vec<_>) = w.iter().map(power2round_poly).unzip();
-
-    (
-        w0.try_into().unwrap(),
-        w1.try_into().unwrap(),
-        t0.try_into().unwrap(),
-        t1.try_into().unwrap(),
-    )
-}
-
-fn reduce_montgomery(n: PolynomialCoeff) -> PolynomialCoeff {
-    let wrapped_n = Wrapping(n as i32);
-    let tmp = (wrapped_n * Wrapping(Q_MOD_2POW32_INVERSE)).0 as i64;
-    (n - tmp * Q) >> 32
-}
-
-fn reduce_32(n: PolynomialCoeff) -> PolynomialCoeff {
-    n - ((n + (1 << 22)) >> 23) * Q
-}
-
-fn decompose_poly(poly: &Polynomial) -> (Polynomial, Polynomial) {
-    let (vec1, vec2): (Vec<_>, Vec<_>) = poly.iter().map(decompose_coeff).unzip();
-    (vec1.try_into().unwrap(), vec2.try_into().unwrap())
-}
-
-fn decompose_coeff(a: &PolynomialCoeff) -> (PolynomialCoeff, PolynomialCoeff) {
-    let a1 = (a + 127) >> 7;
-    let mut a1 = (a1 * 1025 + (1 << 21)) >> 22;
-    a1 &= 15;
-
-    let mut a0 = a - a1 * 2 * GAMMA2;
-    a0 -= (((Q - 1) / 2 - a0) >> 31) & Q;
-
-    (a0, a1)
-}
-
-fn power2round_poly(poly: &Polynomial) -> (Polynomial, Polynomial) {
-    let (poly0, poly1): (Vec<_>, Vec<_>) = poly.iter().map(power2round).unzip();
-    (poly0.try_into().unwrap(), poly1.try_into().unwrap())
-}
-
-fn power2round(coeff: &PolynomialCoeff) -> (PolynomialCoeff, PolynomialCoeff) {
-    let a1 = (coeff + (1 << (D - 1)) - 1) >> D;
-    (coeff - (a1 << D), a1)
-}
-
-pub fn make_challenge(seed: &[u8]) -> Polynomial {
+pub fn make_challenge(seed: &[u8; SEED_SIZE / 2]) -> PlainPolynomial {
     const FIRST_TAU_BITS_MASK: u64 = (1 << TAU) - 1;
 
     let mut hasher = sha3::Sha3::shake_256();
     let mut sign_bits_buf = [0u8; size_of::<u64>()];
-    let mut retval: Polynomial = [0; POLYNOMIAL_DEGREE];
+    let mut retval = [0; POLYNOMIAL_DEGREE];
 
     hasher.input(seed);
     hasher.result(&mut sign_bits_buf);
@@ -498,30 +196,30 @@ pub fn make_challenge(seed: &[u8]) -> Polynomial {
             // We can unwrap safely since the iterator never ends
             .unwrap();
         retval[last_bit_index] = retval[chosen_bit_index];
-        retval[chosen_bit_index] = 1 - 2 * (sign_bits & 1) as PolynomialCoeff;
+        retval[chosen_bit_index] = 1 - 2 * (sign_bits & 1) as coefficient::Coefficient;
         sign_bits >>= 1;
     }
 
-    retval
+    PlainPolynomial::from(retval)
 }
 
 pub fn sign(msg: &[u8], sk: &SecretKey) -> Signature {
-    let [rho, key, tr, s1, s2, t0] = split_by_sizes(
-        sk,
-        &[
-            SEED_SIZE / 2,
-            SEED_SIZE / 2,
-            SEED_SIZE / 2,
-            L * ETA_PACKED_SIZE,
-            K * ETA_PACKED_SIZE,
-            K * T0_PACKED_SIZE,
-        ],
-    );
+    let [rho, key, tr, packed_s1, packed_s2, packed_t0] = sk.partition(&[
+        SEED_SIZE / 2,
+        SEED_SIZE / 2,
+        SEED_SIZE / 2,
+        L * ETA_PACKED_SIZE,
+        K * ETA_PACKED_SIZE,
+        K * T0_PACKED_SIZE,
+    ]);
 
-    // Should not panic as long as slices are of correct sizes
-    let mut s1: [_; L] = extract_vector(s1, unpack_eta_polynomial).unwrap();
-    let mut s2: [_; K] = extract_vector(s2, unpack_eta_polynomial).unwrap();
-    let mut t0: [_; K] = extract_vector(t0, unpack_t0_polynomial).unwrap();
+    let s1: Vector<PlainPolynomial, L> = Pack::unpack(packed_s1, &eta_unpacker);
+    let s2: Vector<PlainPolynomial, K> = Pack::unpack(packed_s2, &eta_unpacker);
+    let t0: Vector<PlainPolynomial, K> = Pack::unpack(packed_t0, &t0_unpacker);
+
+    let s1 = s1.into_ntt();
+    let s2 = s2.into_ntt();
+    let t0 = t0.into_ntt();
 
     let mut hasher = sha3::Sha3::shake_256();
     hasher.input(tr);
@@ -536,96 +234,54 @@ pub fn sign(msg: &[u8], sk: &SecretKey) -> Signature {
     hasher.input(&mu);
     hasher.result(&mut rho_prime);
 
-    let a = expand_a(rho);
-    s1.iter_mut().for_each(to_ntt);
-    s2.iter_mut().for_each(to_ntt);
-    t0.iter_mut().for_each(to_ntt);
+    // Unwrapping is safe here because the slice is of the right size
+    let a = expand::expand_a(rho.as_ref().try_into().unwrap());
 
     let sample_signature = |nonce| {
-        let y = expand_y(&rho_prime, nonce);
+        let y = expand::expand_y(&rho_prime, nonce);
 
-        let mut z = y;
-        z.iter_mut().for_each(to_ntt);
+        let z = y.clone().into_ntt();
+        let w = make_w(&a, &z);
 
-        let mut w = ntt_matrix_product(&a, &z);
-        w.iter_mut().for_each(|poly| {
-            for coeff in poly.iter_mut() {
-                *coeff = reduce_32(*coeff);
-            }
-            from_ntt(poly);
-            caddq(poly);
-        });
+        let (w0, w1) = w.decompose();
+        let mut challenge_seed = [0u8; SEED_SIZE / 2];
 
-        let (w0, w1): (Vec<_>, Vec<_>) = w.iter().map(decompose_poly).unzip();
-        let mut w0: [Polynomial; K] = w0.try_into().unwrap();
-        let w1: [Polynomial; K] = w1.try_into().unwrap();
-        let mut challenge_seed: [u8; SEED_SIZE / 2] = from_fn(|_| 0);
-
-        // Should not panic since `decompose_poly` should have returned a sufficiently long `Vec`
-        let packed_w1: [u8; POLYNOMIAL_DEGREE * K / 2] = try_from_it(
-            w1.iter()
-                .flat_map(|poly| poly.chunks(2).map(|slice| (slice[0] | slice[1] << 4) as u8)),
-        )
-        .unwrap();
+        let packed_w1: [_; K * NB_COEFFICIENTS / 2] =
+            w1.pack(&|chunk: &[Coefficient; 2]| [(chunk[0] | (chunk[1] << 4)) as u8]);
 
         hasher.reset();
         hasher.input(&mu);
         hasher.input(&packed_w1);
         hasher.result(&mut challenge_seed);
 
-        let mut challenge = make_challenge(&challenge_seed);
-        to_ntt(&mut challenge);
-
-        let mut z: [_; L] =
-            try_from_it(s1.iter().map(|poly| ntt_product(&challenge, poly))).unwrap();
-        z.iter_mut().for_each(from_ntt);
-        z.iter_mut()
-            .zip(y.iter())
-            .for_each(|(lpoly, &rpoly)| *lpoly = ntt_sum(*lpoly, rpoly).map(reduce_32));
-        if !z
-            .iter()
-            .flat_map(|poly| poly.iter())
-            .all(|&coeff| abs(coeff) < GAMMA1 - BETA as PolynomialCoeff)
-        {
-            None?
+        let challenge = make_challenge(&challenge_seed).into_ntt();
+        let z = ((s1.clone() * &challenge).into_plain() + y).reduce_32();
+        if z.max() >= GAMMA1 - BETA {
+            return None;
         }
 
-        let mut h: [Polynomial; K] =
-            try_from_it(s2.iter().map(|poly| ntt_product(&challenge, poly))).unwrap();
-        h.iter_mut().for_each(from_ntt);
-        w0.iter_mut()
-            .zip(h.iter())
-            .for_each(|(lpoly, &rpoly)| *lpoly = ntt_difference(*lpoly, rpoly).map(reduce_32));
-        if !w0
-            .iter()
-            .flat_map(|poly| poly.iter())
-            .all(|&coeff| abs(coeff) < GAMMA2 - BETA as PolynomialCoeff)
-        {
-            None?
+        let h = (s2.clone() * &challenge).into_plain();
+        let w0 = (w0 - h).reduce_32();
+        if w0.max() >= GAMMA2 - BETA {
+            return None;
         }
 
-        let mut h: [Polynomial; K] =
-            try_from_it(t0.iter().map(|poly| ntt_product(&challenge, poly))).unwrap();
-        h.iter_mut().for_each(from_ntt);
-        h.iter_mut()
-            .for_each(|poly| poly.iter_mut().for_each(|coeff| *coeff = reduce_32(*coeff)));
-        if !h
-            .iter()
-            .flat_map(|poly| poly.iter())
-            .all(|&coeff| abs(coeff) < GAMMA2)
-        {
-            None?
+        let h = (t0.clone() * &challenge).into_plain().reduce_32();
+        if h.max() >= GAMMA2 - BETA {
+            return None;
         }
 
-        w0.iter_mut()
-            .zip(h.iter())
-            .for_each(|(lpoly, &rpoly)| *lpoly = ntt_sum(*lpoly, rpoly));
-        let (h, bits_count) = make_hint(&w0, &w1);
-        if bits_count > OMEGA {
-            None?
+        let h = (t0.clone() * &challenge).into_plain().reduce_32();
+        if h.max() >= GAMMA2 {
+            return None;
         }
 
-        Some(make_signature(challenge_seed.into_iter(), &z, &h))
+        let (hint, hint_bits_count) = make_hint(&(w0 + h), &w1);
+        if hint_bits_count > OMEGA {
+            return None;
+        }
+
+        Some(make_signature(&challenge_seed, &z, &hint))
     };
 
     // Will not panic since input iterator is infinite
@@ -633,195 +289,232 @@ pub fn sign(msg: &[u8], sk: &SecretKey) -> Signature {
 }
 
 fn make_signature(
-    challenge_seed_it: impl Iterator<Item = u8>,
-    z: &[Polynomial; L],
+    challenge_seed: &[u8; SEED_SIZE / 2],
+    z: &Vector<PlainPolynomial, L>,
     hint: &[[bool; POLYNOMIAL_DEGREE]; K],
 ) -> Signature {
-    let (hint_positions, hint_numbers_by_polynomial): (Vec<_>, Vec<_>) =
-        hint.iter().map(pack_hint_polynomial).unzip();
-    let signature_it = challenge_seed_it
-        .chain(z.iter().flat_map(pack_z_polynomial))
-        .chain(hint_positions.into_iter().flatten())
-        .chain(repeat(0).take(OMEGA - hint_numbers_by_polynomial.iter().sum::<u8>() as usize))
-        .chain(hint_numbers_by_polynomial.iter().scan(0, |acc, &n| {
+    fn pack_hint_polynomial(
+        poly: &[bool; POLYNOMIAL_DEGREE],
+    ) -> (impl Iterator<Item = u8> + '_, u8) {
+        let (it1, it2) = poly.iter().tee();
+        (
+            it1.enumerate().filter(|(_, &b)| b).map(|(i, _)| i as u8),
+            it2.filter(|&&b| b).count() as u8,
+        )
+    }
+
+    let mut retval = [0; SIGNATURE_SIZE];
+
+    let (hint_positions, hint_numbers_by_polynomial): ([_; K], _) =
+        unzip(hint.iter().map(pack_hint_polynomial)).unwrap();
+
+    let [retval_challenge_seed, retval_packed_z, retval_packed_hint] =
+        retval.partition_mut(&[SEED_SIZE / 2, L * POLYZ_PACKED_SIZE, POLYVECH_PACKED_SIZE]);
+
+    retval_challenge_seed.copy_from_slice(challenge_seed);
+
+    let packed_z: [_; L * POLYZ_PACKED_SIZE] = z.pack(&z_packer);
+    retval_packed_z.copy_from_slice(&packed_z);
+
+    for (lhs, rhs) in zip(
+        retval_packed_hint.iter_mut(),
+        hint_positions.into_iter().flatten(),
+    ) {
+        *lhs = rhs;
+    }
+
+    let accumulated_hint_numbers: [_; K] = hint_numbers_by_polynomial
+        .into_iter()
+        .scan(0, |acc, n| {
             *acc += n;
             Some(*acc)
-        }));
+        })
+        .try_collect_array()
+        .unwrap();
 
-    // Should not panic ?
-    try_from_it(signature_it).unwrap()
+    for (lhs, rhs) in zip(
+        retval_packed_hint.iter_mut().rev(),
+        accumulated_hint_numbers.into_iter().rev(),
+    ) {
+        *lhs = rhs;
+    }
+
+    retval
 }
 
-fn pack_hint_polynomial(poly: &[bool; POLYNOMIAL_DEGREE]) -> (impl Iterator<Item = u8> + '_, u8) {
-    let (it1, it2) = poly.iter().tee();
-    (
-        it1.enumerate().filter(|(_, &b)| b).map(|(i, _)| i as u8),
-        it2.filter(|&&b| b).count() as u8,
-    )
+fn unzip<T1, T2, const N: usize>(
+    mut it: impl Iterator<Item = (T1, T2)>,
+) -> Option<([T1; N], [T2; N])> {
+    let mut retval1: [_; N] = from_fn(|_| MaybeUninit::uninit());
+    let mut retval2: [_; N] = from_fn(|_| MaybeUninit::uninit());
+
+    for (lhs1, lhs2) in zip(retval1.iter_mut(), retval2.iter_mut()) {
+        let (rhs1, rhs2) = it.next()?;
+        lhs1.write(rhs1);
+        lhs2.write(rhs2);
+    }
+
+    unsafe {
+        Some((
+            retval1.as_ptr().cast::<[T1; N]>().read(),
+            retval2.as_ptr().cast::<[T2; N]>().read(),
+        ))
+    }
 }
 
-fn pack_z_polynomial(poly: &Polynomial) -> impl Iterator<Item = u8> + '_ {
-    poly.chunks(2).flat_map(|chunk| {
-        let tmp: [_; 2] = from_fn(|i| GAMMA1 - chunk[i]);
-        [
-            tmp[0],
-            tmp[0] >> 8,
-            tmp[0] >> 16 | tmp[1] << 4,
-            tmp[1] >> 4,
-            tmp[1] >> 12,
-        ]
-        .map(|coeff| coeff as u8)
-    })
+fn z_packer(chunk: &[Coefficient; 2]) -> [u8; 5] {
+    let chunk = chunk.map(|coeff| GAMMA1 - coeff);
+    [
+        chunk[0],
+        chunk[0] >> 8,
+        chunk[0] >> 16 | chunk[1] << 4,
+        chunk[1] >> 4,
+        chunk[1] >> 12,
+    ]
+    .map(|coeff| coeff as u8)
 }
 
 fn make_hint(
-    w0: &[Polynomial; K],
-    w1: &[Polynomial; K],
+    w0: &Vector<PlainPolynomial, K>,
+    w1: &Vector<PlainPolynomial, K>,
 ) -> ([[bool; POLYNOMIAL_DEGREE]; K], usize) {
-    let w0_flat_it = w0.iter().flat_map(|poly| poly.iter());
-    let w1_flat_it = w1.iter().flat_map(|poly| poly.iter());
-    let (hint_it, count_it) = w0_flat_it
-        .zip(w1_flat_it)
+    let w0_it = w0.into_iter().flatten();
+    let w1_it = w1.into_iter().flatten();
+
+    let (hint_it, count_it) = zip(w0_it, w1_it)
         .map(|(&coeff0, &coeff1)| {
             !(-GAMMA2..=GAMMA2).contains(&coeff0) || coeff0 == -GAMMA2 && coeff1 != 0
         })
         .tee();
 
-    (
-        try_from_it(
-            hint_it
-                .chunks(POLYNOMIAL_DEGREE)
-                .into_iter()
-                .filter_map(try_from_it),
-        )
-        .unwrap(),
-        count_it.filter(|&b| b).count(),
-    )
+    let hint = hint_it
+        .chunks(NB_COEFFICIENTS)
+        .into_iter()
+        .filter_map(|it| it.try_collect_array())
+        .try_collect_array()
+        .unwrap();
+
+    (hint, count_it.filter(|&b| b).count())
 }
 
-pub fn ntt_difference(lpoly: Polynomial, rpoly: Polynomial) -> Polynomial {
-    lpoly
-        .iter()
-        .zip(rpoly)
-        .map(|(lhs, rhs)| lhs - rhs)
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap()
+trait Partition {
+    type Slice;
+
+    fn partition<const N: usize>(self, sizes: &[usize; N]) -> [Self::Slice; N];
 }
 
-fn abs(n: PolynomialCoeff) -> PolynomialCoeff {
-    n - ((n >> 31) & (2 * n))
+trait PartitionMut {
+    type SliceMut;
+
+    fn partition_mut<const N: usize>(self, sizes: &[usize; N]) -> [Self::SliceMut; N];
 }
 
-fn split_by_sizes<'a, const N: usize>(slice: &'a [u8], sizes: &[usize; N]) -> [&'a [u8]; N] {
-    assert!(sizes.iter().sum::<usize>() == slice.len());
+impl<'a> Partition for &'a [u8] {
+    type Slice = &'a [u8];
 
-    let (it1, it2) = sizes
-        .iter()
-        .scan(0, |sum, n| {
-            *sum += n;
-            Some(*sum)
-        })
-        .tee();
+    fn partition<const N: usize>(self, sizes: &[usize; N]) -> [Self::Slice; N] {
+        assert!(sizes.iter().all(|&size| size > 0));
+        assert!(sizes.iter().sum::<usize>() == self.len());
 
-    let subslices_it = once(0)
-        .chain(it1)
-        .zip(it2)
-        .map(|(start, end)| &slice[start..end]);
+        let mut it = sizes.iter().chain(once(&0));
+        let mut counter = *it.next().unwrap();
+        let mut retval_it = self.split_inclusive(|_| {
+            counter -= 1;
+            if counter == 0 {
+                counter = *it.next().unwrap();
+                true
+            } else {
+                false
+            }
+        });
 
-    // Should never panic since `sizes` is as large as the return value
-    try_from_it(subslices_it).unwrap()
+        // Should never panic since `sizes` is as large as the return value
+        from_fn(|_| retval_it.next().unwrap())
+    }
 }
 
-fn extract_vector<const N: usize>(
-    sk_slice: &[u8],
-    extract_poly: impl Fn(&[u8]) -> Option<Polynomial>,
-) -> Option<[Polynomial; N]> {
-    try_from_it(
-        sk_slice
-            .chunks_exact(sk_slice.len() / N)
-            .filter_map(extract_poly),
-    )
+impl<'a> Partition for &'a mut [u8] {
+    type Slice = &'a [u8];
+
+    fn partition<const N: usize>(self, sizes: &[usize; N]) -> [Self::Slice; N] {
+        self.partition_mut(sizes).map(|slice| &*slice)
+    }
 }
 
-fn unpack_eta_polynomial(sk_slice: &[u8]) -> Option<Polynomial> {
-    const _3BITS_MASK: PolynomialCoeff = 7;
-    const SK_CHUNK_LENGTH: usize = 3;
+impl<'a> PartitionMut for &'a mut [u8] {
+    type SliceMut = &'a mut [u8];
 
-    let it = sk_slice
-        .chunks_exact(SK_CHUNK_LENGTH)
-        .filter_map(|chunk| {
-            let chunk: [_; SK_CHUNK_LENGTH] =
-                try_from_it(chunk.iter().map(|&x| x as PolynomialCoeff))?;
-            Some(
-                [
-                    chunk[0],
-                    chunk[0] >> 3,
-                    (chunk[0] >> 6) | (chunk[1] << 2),
-                    chunk[1] >> 1,
-                    chunk[1] >> 4,
-                    (chunk[1] >> 7) | (chunk[2] << 1),
-                    chunk[2] >> 2,
-                    chunk[2] >> 5,
-                ]
-                .into_iter()
-                .map(|n| ETA - (n & _3BITS_MASK)),
-            )
-        })
-        .flatten();
+    fn partition_mut<const N: usize>(self, sizes: &[usize; N]) -> [Self::SliceMut; N] {
+        assert!(sizes.iter().all(|&size| size > 0));
+        assert!(sizes.iter().sum::<usize>() == self.len());
 
-    try_from_it(it)
+        let mut it = sizes.iter().chain(once(&0));
+        let mut counter = *it.next().unwrap();
+        let mut retval_it = self.split_inclusive_mut(|_| {
+            counter -= 1;
+            if counter == 0 {
+                counter = *it.next().unwrap();
+                true
+            } else {
+                false
+            }
+        });
+
+        // Should never panic since `sizes` is as large as the return value
+        from_fn(|_| retval_it.next().unwrap())
+    }
 }
 
-fn unpack_t0_polynomial(sk_slice: &[u8]) -> Option<Polynomial> {
-    const DBITS_MASK: PolynomialCoeff = 0x1fff;
-    const SK_CHUNK_LENGTH: usize = 13;
+fn eta_unpacker(chunk: &[u8; 3]) -> [Coefficient; 8] {
+    const _3BITS_MASK: coefficient::Coefficient = 7;
 
-    let it = sk_slice
-        .chunks_exact(SK_CHUNK_LENGTH)
-        .filter_map(|chunk| {
-            let chunk: [_; SK_CHUNK_LENGTH] =
-                try_from_it(chunk.iter().map(|&x| x as PolynomialCoeff))?;
-            Some(
-                [
-                    chunk[0] | (chunk[1] << 8),
-                    (chunk[1] >> 5) | (chunk[2] << 3) | (chunk[3] << 11),
-                    (chunk[3] >> 2) | (chunk[4] << 6),
-                    (chunk[4] >> 7) | (chunk[5] << 1) | (chunk[6] << 9),
-                    (chunk[6] >> 4) | (chunk[7] << 4) | (chunk[8] << 12),
-                    (chunk[8] >> 1) | (chunk[9] << 7),
-                    (chunk[9] >> 6) | (chunk[10] << 2) | (chunk[11] << 10),
-                    (chunk[11] >> 3) | (chunk[12] << 5),
-                ]
-                .into_iter()
-                .map(|n| (DBITS_MASK / 2 + 1) - (n & DBITS_MASK)),
-            )
-        })
-        .flatten();
+    [
+        chunk[0],
+        chunk[0] >> 3,
+        (chunk[0] >> 6) | (chunk[1] << 2),
+        chunk[1] >> 1,
+        chunk[1] >> 4,
+        (chunk[1] >> 7) | (chunk[2] << 1),
+        chunk[2] >> 2,
+        chunk[2] >> 5,
+    ]
+    .map(|n| n as Coefficient)
+    .map(|n| ETA - (n & _3BITS_MASK))
+}
 
-    try_from_it(it)
+fn t0_unpacker(chunk: &[u8; 13]) -> [Coefficient; 8] {
+    const DBITS_MASK: coefficient::Coefficient = 0x1fff;
+
+    let chunk = chunk.map(|byte| byte as Coefficient);
+
+    [
+        chunk[0] | (chunk[1] << 8),
+        (chunk[1] >> 5) | (chunk[2] << 3) | (chunk[3] << 11),
+        (chunk[3] >> 2) | (chunk[4] << 6),
+        (chunk[4] >> 7) | (chunk[5] << 1) | (chunk[6] << 9),
+        (chunk[6] >> 4) | (chunk[7] << 4) | (chunk[8] << 12),
+        (chunk[8] >> 1) | (chunk[9] << 7),
+        (chunk[9] >> 6) | (chunk[10] << 2) | (chunk[11] << 10),
+        (chunk[11] >> 3) | (chunk[12] << 5),
+    ]
+    .map(|n| n as Coefficient)
+    .map(|n| (DBITS_MASK / 2 + 1) - (n & DBITS_MASK))
 }
 
 pub fn verify(msg: &[u8], signature: &Signature, pk: &PublicKey) -> bool {
     let mut hasher = sha3::Sha3::shake_256();
 
-    let [rho, t1] = split_by_sizes(pk, &[SEED_SIZE / 2, K * T1_PACKED_SIZE]);
-    let mut t1: [_; K] = extract_vector(t1, unpack_t1_polynomial).unwrap();
+    let [rho, packed_t1] = pk.partition(&[SEED_SIZE / 2, K * T1_PACKED_SIZE]);
+    let t1: Vector<PlainPolynomial, K> = Pack::unpack(packed_t1, &t1_unpacker);
 
-    let [challenge_seed, z, hint] = split_by_sizes(
-        signature,
-        &[SEED_SIZE / 2, L * POLYZ_PACKED_SIZE, POLYVECH_PACKED_SIZE],
-    );
-    let mut z = extract_vector(z, unpack_z_polynomial).unwrap();
-    if !z
-        .iter()
-        .flatten()
-        .all(|&coeff| abs(coeff) < GAMMA1 - BETA as PolynomialCoeff)
-    {
+    let [expected_challenge_seed, packed_z, packed_hint] =
+        signature.partition(&[SEED_SIZE / 2, L * POLYZ_PACKED_SIZE, POLYVECH_PACKED_SIZE]);
+    let z: Vector<PlainPolynomial, L> = Pack::unpack(packed_z, &z_unpacker);
+    if z.max() >= GAMMA1 - BETA {
         return false;
     }
 
-    let hint = if let Some(hint) = unpack_hint(hint) {
+    let hint = if let Some(hint) = unpack_hint(packed_hint.try_into().unwrap()) {
         hint
     } else {
         return false;
@@ -838,68 +531,30 @@ pub fn verify(msg: &[u8], signature: &Signature, pk: &PublicKey) -> bool {
     let mut mu = [0u8; SEED_SIZE];
     hasher.result(&mut mu);
 
-    let mut challenge = make_challenge(challenge_seed);
-    let a = expand_a(rho);
+    let challenge = make_challenge(expected_challenge_seed.try_into().unwrap()).into_ntt();
+    let a = expand::expand_a(rho.try_into().unwrap());
+    let w1 = &a * &z.into_ntt();
+    let t1 = t1.shift_d().into_ntt() * &challenge;
+    let w1 = (w1 - t1).reduce_32().into_plain().caddq().use_hint(&hint);
 
-    z.iter_mut().for_each(to_ntt);
+    let packed_w1: [_; POLYNOMIAL_DEGREE * K / 2] =
+        w1.pack(&|slice: &[_; 2]| [(slice[0] | slice[1] << 4) as u8]);
 
-    let w1 = ntt_matrix_product(&a, &z);
-
-    to_ntt(&mut challenge);
-    t1.iter_mut().flatten().for_each(|coeff| *coeff <<= D);
-    t1.iter_mut().for_each(to_ntt);
-    t1.iter_mut()
-        .for_each(|poly| *poly = ntt_product(&challenge, poly));
-
-    let mut w1 = try_from_it(
-        w1.iter()
-            .zip(t1.iter())
-            .map(|(&w1_poly, &t1_poly)| ntt_difference(w1_poly, t1_poly).map(reduce_32)),
-    )
-    .unwrap();
-    w1.iter_mut().for_each(from_ntt);
-    w1.iter_mut().for_each(caddq);
-    use_hint(&mut w1, &hint);
-
-    let packed_w1: [u8; POLYNOMIAL_DEGREE * K / 2] = try_from_it(
-        w1.iter()
-            .flat_map(|poly| poly.chunks(2).map(|slice| (slice[0] | slice[1] << 4) as u8)),
-    )
-    .unwrap();
-
-    let mut computed_challenge_seed = [0u8; SEED_SIZE / 2];
+    let mut challenge_seed = [0u8; SEED_SIZE / 2];
     hasher.reset();
     hasher.input(&mu);
     hasher.input(&packed_w1);
-    hasher.result(&mut computed_challenge_seed);
+    hasher.result(&mut challenge_seed);
 
-    computed_challenge_seed == challenge_seed
+    challenge_seed == expected_challenge_seed
 }
 
-fn use_hint(w1: &mut [Polynomial; K], hint: &[[bool; POLYNOMIAL_DEGREE]; K]) {
-    let w1_it = w1.iter_mut().flatten();
-    let hint_it = hint.iter().flatten();
-
-    w1_it.zip(hint_it).for_each(|(w1_coeff, &hint_coeff)| {
-        let (a0, a1) = decompose_coeff(w1_coeff);
-        *w1_coeff = if hint_coeff {
-            (a1 + (if a0 > 0 { 1 } else { -1 })) & 15
-        } else {
-            a1
-        }
-    });
-}
-
-fn unpack_hint(packed_slice: &[u8]) -> Option<[[bool; POLYNOMIAL_DEGREE]; K]> {
-    if packed_slice.len() != POLYVECH_PACKED_SIZE {
-        return None;
-    }
-
-    let (one_indices, polynomial_indices) = packed_slice.split_at(OMEGA);
+fn unpack_hint(packed_hint: &[u8; POLYVECH_PACKED_SIZE]) -> Option<[[bool; POLYNOMIAL_DEGREE]; K]> {
+    let (one_indices, polynomial_indices) = packed_hint.split_at(OMEGA);
     if !(polynomial_indices.len() == K
         && polynomial_indices
             .iter()
-            .all(|&i| (0..OMEGA).contains(&(i as usize))))
+            .all(|i| (0..OMEGA as u8).contains(i)))
     {
         return None;
     }
@@ -921,7 +576,7 @@ fn unpack_hint(packed_slice: &[u8]) -> Option<[[bool; POLYNOMIAL_DEGREE]; K]> {
         }
     });
 
-    try_from_it(retval_it)
+    retval_it.try_collect_array()
 }
 
 fn is_strictly_sorted<'a>(mut it: impl Iterator<Item = &'a u8>) -> bool {
@@ -937,61 +592,49 @@ fn is_strictly_sorted<'a>(mut it: impl Iterator<Item = &'a u8>) -> bool {
     .is_some()
 }
 
-fn unpack_z_polynomial(packed_slice: &[u8]) -> Option<Polynomial> {
-    const _20BITS_MASK: PolynomialCoeff = (1 << 20) - 1;
-    const SK_CHUNK_LENGTH: usize = 5;
+fn z_unpacker(chunk: &[u8; 5]) -> [Coefficient; 2] {
+    const _20BITS_MASK: Coefficient = (1 << 20) - 1;
 
-    assert!(packed_slice.len() == POLYZ_PACKED_SIZE);
-
-    let it = packed_slice
-        .chunks_exact(SK_CHUNK_LENGTH)
-        .filter_map(|chunk| {
-            let chunk: [_; SK_CHUNK_LENGTH] =
-                try_from_it(chunk.iter().map(|&x| x as PolynomialCoeff))?;
-            Some(
-                [
-                    chunk[0] | (chunk[1] << 8) | (chunk[2] << 16),
-                    (chunk[2] >> 4) | (chunk[3] << 4) | (chunk[4] << 12),
-                ]
-                .into_iter()
-                .map(|n| GAMMA1 - (n & _20BITS_MASK)),
-            )
-        })
-        .flatten();
-
-    try_from_it(it)
+    let chunk = chunk.map(|x| x as Coefficient);
+    [
+        chunk[0] | (chunk[1] << 8) | (chunk[2] << 16),
+        (chunk[2] >> 4) | (chunk[3] << 4) | (chunk[4] << 12),
+    ]
+    .map(|n| GAMMA1 - (n & _20BITS_MASK))
 }
 
-fn unpack_t1_polynomial(packed_slice: &[u8]) -> Option<Polynomial> {
-    const _10BITS_MASK: PolynomialCoeff = (1 << 10) - 1;
-    const SK_CHUNK_LENGTH: usize = 5;
+fn t1_unpacker(chunk: &[u8; 5]) -> [Coefficient; 4] {
+    const _10BITS_MASK: coefficient::Coefficient = (1 << 10) - 1;
 
-    assert!(packed_slice.len() == T1_PACKED_SIZE);
-
-    let it = packed_slice
-        .chunks_exact(SK_CHUNK_LENGTH)
-        .filter_map(|chunk| {
-            let chunk: [_; SK_CHUNK_LENGTH] =
-                try_from_it(chunk.iter().map(|&x| x as PolynomialCoeff))?;
-            Some(
-                [
-                    chunk[0] | (chunk[1] << 8),
-                    (chunk[1] >> 2) | (chunk[2] << 6),
-                    (chunk[2] >> 4) | (chunk[3] << 4),
-                    (chunk[3] >> 6) | (chunk[4] << 2),
-                ]
-                .into_iter()
-                .map(|n| n & _10BITS_MASK),
-            )
-        })
-        .flatten();
-
-    try_from_it(it)
+    let chunk = chunk.map(|x| x as Coefficient);
+    [
+        chunk[0] | (chunk[1] << 8),
+        (chunk[1] >> 2) | (chunk[2] << 6),
+        (chunk[2] >> 4) | (chunk[3] << 4),
+        (chunk[3] >> 6) | (chunk[4] << 2),
+    ]
+    .map(|n| n & _10BITS_MASK)
 }
 
-fn try_from_it<T, const N: usize>(mut it: impl Iterator<Item = T>) -> Option<[T; N]>
+fn try_from_fn<T, const N: usize>(mut f: impl FnMut(usize) -> Option<T>) -> Option<[T; N]> {
+    let mut retval: [_; N] = from_fn(|_| MaybeUninit::uninit());
+
+    for (i, val) in retval.iter_mut().enumerate() {
+        val.write(f(i)?);
+    }
+
+    unsafe { Some(retval.as_ptr().cast::<[T; N]>().read()) }
+}
+
+trait TryCollectArray<T, const N: usize> {
+    fn try_collect_array(self) -> Option<[T; N]>;
+}
+
+impl<T, Iter, const N: usize> TryCollectArray<T, N> for Iter
 where
-    T: Copy,
+    Iter: Iterator<Item = T>,
 {
-    try_from_fn(|_| it.next())
+    fn try_collect_array(mut self) -> Option<[T; N]> {
+        try_from_fn(|_| self.next())
+    }
 }

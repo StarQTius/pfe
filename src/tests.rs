@@ -1,5 +1,4 @@
 use crate::*;
-use pretty_assertions::assert_eq;
 
 mod fixtures;
 
@@ -8,51 +7,26 @@ fn test_expand_a() {
     let fixtures = fixtures::fixtures();
 
     for fixture in fixtures {
-        for (i, (expected, result)) in fixture
-            .a
-            .iter()
-            .flatten()
-            .zip(
-                expand_a(fixture.seed[..SEED_SIZE / 2].try_into().unwrap())
-                    .iter()
-                    .flatten(),
-            )
-            .enumerate()
-        {
-            assert_eq!(expected, result, "{}", i);
-        }
+        let result = expand::expand_a(fixture.half_seed());
+        assert!(result == fixture.a);
     }
 }
 
 #[test]
 fn test_expand_s() {
     let fixtures = fixtures::fixtures();
-
-    for (i, fixture) in fixtures.iter().enumerate() {
-        for (j, (lpoly, rpoly)) in fixture
-            .s
-            .iter()
-            .zip(expand_s::<L>(&fixture.seed, 0).iter())
-            .enumerate()
-        {
-            assert_eq!(lpoly, rpoly, "{} -- {}", i, j);
-        }
+    for fixture in fixtures {
+        let result = expand::expand_s(&fixture.seed, 0);
+        assert!(result == fixture.s);
     }
 }
 
 #[test]
 fn test_expand_y() {
     let fixtures = fixtures::fixtures();
-
-    for (i, fixture) in fixtures.iter().enumerate() {
-        for (j, (lpoly, rpoly)) in fixture
-            .y
-            .iter()
-            .zip(expand_y(&fixture.seed, 0).iter())
-            .enumerate()
-        {
-            assert_eq!(lpoly, rpoly, "{} -- {}", i, j);
-        }
+    for fixture in fixtures {
+        let result = expand::expand_y(&fixture.seed, 0);
+        assert!(result == fixture.y);
     }
 }
 
@@ -60,20 +34,15 @@ fn test_expand_y() {
 fn test_make_w_and_t_vecs() {
     let fixtures = fixtures::fixtures();
 
-    for (i, fixture) in fixtures.iter().enumerate() {
-        let (w0, w1, t0, t1) = make_w_and_t_vecs(&fixture.a, fixture.y);
-        for (j, (lpoly, rpoly)) in fixture.w0.iter().zip(w0.iter()).enumerate() {
-            assert_eq!(lpoly, rpoly, "w0 {} -- {}", i, j);
-        }
-        for (j, (lpoly, rpoly)) in fixture.w1.iter().zip(w1.iter()).enumerate() {
-            assert_eq!(lpoly, rpoly, "w1 {} -- {}", i, j);
-        }
-        for (j, (lpoly, rpoly)) in fixture.t0.iter().zip(t0.iter()).enumerate() {
-            assert_eq!(lpoly, rpoly, "t0 {} -- {}", i, j);
-        }
-        for (j, (lpoly, rpoly)) in fixture.t1.iter().zip(t1.iter()).enumerate() {
-            assert_eq!(lpoly, rpoly, "t1 {} -- {}", i, j);
-        }
+    for fixture in fixtures {
+        let w = make_w(&fixture.a, &fixture.y.clone().into_ntt());
+        let (w0, w1) = w.clone().decompose();
+        let (t0, t1) = w.power2round();
+
+        assert!(w0 == fixture.w0);
+        assert!(w1 == fixture.w1);
+        assert!(t0 == fixture.t0);
+        assert!(t1 == fixture.t1);
     }
 }
 
@@ -81,13 +50,9 @@ fn test_make_w_and_t_vecs() {
 fn test_make_challenge() {
     let fixtures = fixtures::fixtures();
 
-    for (i, fixture) in fixtures.iter().enumerate() {
-        assert_eq!(
-            fixture.c,
-            make_challenge(&fixture.seed[..SEED_SIZE / 2]),
-            "{}",
-            i
-        );
+    for fixture in fixtures {
+        let challenge = make_challenge(fixture.half_seed());
+        assert!(challenge == fixture.c);
     }
 }
 
@@ -104,7 +69,7 @@ fn test_make_keys() {
         hasher_128.input(&((i * 3 + 1) as u64).to_le_bytes());
         hasher_128.result(&mut byte_buf[..SEED_SIZE / 2]);
 
-        let (pk, sk) = make_keys(byte_buf.into_iter()).unwrap();
+        let (pk, sk) = make_keys(byte_buf.clone().into_iter()).unwrap();
         let mut pk_hash = [0; 32];
         let mut sk_hash = [0; 32];
 
@@ -112,23 +77,24 @@ fn test_make_keys() {
         hasher_256.input(&pk);
         hasher_256.result(&mut pk_hash);
 
-        assert_eq!(fixture.pk, pk_hash);
+        assert!(fixture.pk == pk_hash);
 
         hasher_256.reset();
         hasher_256.input(&sk);
         hasher_256.result(&mut sk_hash);
 
-        assert_eq!(fixture.sk, sk_hash);
+        assert!(fixture.sk == sk_hash);
 
         // Not tested separately because fixtures only provide hashes of public and secret keys, so
         // we reuse the keys we generated above
 
         let signature = sign(&fixture.m, &sk);
+
         let mut signature_hash = [0; 32];
         hasher_256.reset();
         hasher_256.input(&signature);
         hasher_256.result(&mut signature_hash);
-        assert_eq!(signature_hash, fixture.sig, "{}", i);
+        assert!(signature_hash == fixture.sig);
         assert!(verify(&fixture.m, &signature, &pk));
     }
 }

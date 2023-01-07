@@ -10,12 +10,15 @@ use std::{
 };
 use vector::{Matrix, Vector};
 
+mod aes_digest;
 mod array_math;
 mod coefficient;
 mod expand;
 mod packing;
 mod polynomial;
 mod vector;
+#[macro_use]
+mod subarray;
 
 #[cfg(test)]
 mod tests;

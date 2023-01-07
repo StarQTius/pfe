@@ -1,4 +1,4 @@
 #!/bin/sh
 
 make -C dilithium/ref -j4
-dilithium/ref/test/test_vectors5 > rsrc/fixtures.txt
+dilithium/ref/test/test_vectors5aes > rsrc/fixtures.txt

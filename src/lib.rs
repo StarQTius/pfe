@@ -1,10 +1,14 @@
 use crate::packing::Pack;
 use coefficient::Coefficient;
-use crypto::{digest::Digest, sha3};
 use itertools::Itertools;
 use polynomial::{ntt::NTTPolynomial, plain::PlainPolynomial, NB_COEFFICIENTS};
+use sha3::{
+    digest::{ExtendableOutput, ExtendableOutputReset, Update},
+    Shake256,
+};
 use std::{
     array::from_fn,
+    io::Read,
     iter::{once, zip, Iterator},
     mem::{size_of, MaybeUninit},
 };
@@ -56,16 +60,19 @@ const TAU: usize = 60;
 const SIGNATURE_SIZE: usize = SEED_SIZE / 2 + L * POLYZ_PACKED_SIZE + POLYVECH_PACKED_SIZE;
 
 pub fn make_keys(byte_stream: impl Iterator<Item = u8>) -> Option<(PublicKey, SecretKey)> {
-    let mut hasher = sha3::Sha3::shake_256();
+    let mut hasher = Shake256::default();
+
     let mut rho = [0u8; SEED_SIZE / 2];
     let mut rho_prime = [0u8; SEED_SIZE];
     let mut key = [0u8; SEED_SIZE / 2];
 
     let seed: [u8; SEED_SIZE / 2] = byte_stream.try_collect_array()?;
-    hasher.input(&seed);
-    hasher.result(&mut rho);
-    hasher.result(&mut rho_prime);
-    hasher.result(&mut key);
+    hasher.update(&seed);
+
+    let mut reader = hasher.finalize_xof_reset();
+    reader.read_exact(&mut rho).unwrap();
+    reader.read_exact(&mut rho_prime).unwrap();
+    reader.read_exact(&mut key).unwrap();
 
     let a = expand::expand_a(&rho);
     let s1 = expand::expand_s::<L>(&rho_prime, 0);
@@ -75,9 +82,11 @@ pub fn make_keys(byte_stream: impl Iterator<Item = u8>) -> Option<(PublicKey, Se
     let pk = pack_public_key(&rho, t1);
 
     let mut tr = [0; SEED_SIZE / 2];
-    hasher.reset();
-    hasher.input(&pk);
-    hasher.result(&mut tr);
+
+    hasher.update(&pk);
+
+    let mut reader = hasher.finalize_xof_reset();
+    reader.read_exact(&mut tr).unwrap();
 
     let sk = make_private_key(&rho, &tr, &key, t0, s1, s2)?;
 
@@ -179,12 +188,14 @@ fn make_w(
 pub fn make_challenge(seed: &[u8; SEED_SIZE / 2]) -> PlainPolynomial {
     const FIRST_TAU_BITS_MASK: u64 = (1 << TAU) - 1;
 
-    let mut hasher = sha3::Sha3::shake_256();
+    let mut hasher = Shake256::default();
     let mut sign_bits_buf = [0u8; size_of::<u64>()];
     let mut retval = [0; POLYNOMIAL_DEGREE];
 
-    hasher.input(seed);
-    hasher.result(&mut sign_bits_buf);
+    hasher.update(seed);
+
+    let mut reader = hasher.finalize_xof();
+    reader.read_exact(&mut sign_bits_buf).unwrap();
 
     let mut sign_bits = u64::from_le_bytes(sign_bits_buf) & FIRST_TAU_BITS_MASK;
 
@@ -192,7 +203,7 @@ pub fn make_challenge(seed: &[u8; SEED_SIZE / 2]) -> PlainPolynomial {
         let chosen_bit_index = (0..)
             .map(|_| {
                 let mut buf = [0u8; 1];
-                hasher.result(&mut buf);
+                reader.read_exact(&mut buf).unwrap();
                 buf[0] as usize
             })
             .find(|&bit_index| bit_index <= last_bit_index)
@@ -224,18 +235,21 @@ pub fn sign(msg: &[u8], sk: &SecretKey) -> Signature {
     let s2 = s2.into_ntt();
     let t0 = t0.into_ntt();
 
-    let mut hasher = sha3::Sha3::shake_256();
-    hasher.input(tr);
-    hasher.input(msg);
+    let mut hasher = Shake256::default();
+    hasher.update(tr);
+    hasher.update(msg);
 
     let mut mu = [0u8; SEED_SIZE];
-    hasher.result(&mut mu);
+    let mut reader = hasher.finalize_xof_reset();
+    reader.read_exact(&mut mu).unwrap();
 
     let mut rho_prime = [0u8; SEED_SIZE];
-    hasher.reset();
-    hasher.input(key);
-    hasher.input(&mu);
-    hasher.result(&mut rho_prime);
+
+    hasher.update(key);
+    hasher.update(&mu);
+
+    let mut reader = hasher.finalize_xof_reset();
+    reader.read_exact(&mut rho_prime).unwrap();
 
     // Unwrapping is safe here because the slice is of the right size
     let a = expand::expand_a(rho.as_ref().try_into().unwrap());
@@ -252,10 +266,11 @@ pub fn sign(msg: &[u8], sk: &SecretKey) -> Signature {
         let packed_w1: [_; K * NB_COEFFICIENTS / 2] =
             w1.pack(&|chunk: &[Coefficient; 2]| [(chunk[0] | (chunk[1] << 4)) as u8]);
 
-        hasher.reset();
-        hasher.input(&mu);
-        hasher.input(&packed_w1);
-        hasher.result(&mut challenge_seed);
+        hasher.update(&mu);
+        hasher.update(&packed_w1);
+
+        let mut reader = hasher.finalize_xof_reset();
+        reader.read_exact(&mut challenge_seed).unwrap();
 
         let challenge = make_challenge(&challenge_seed).into_ntt();
         let z = ((s1.clone() * &challenge).into_plain() + y).reduce_32();
@@ -505,7 +520,7 @@ fn t0_unpacker(chunk: &[u8; 13]) -> [Coefficient; 8] {
 }
 
 pub fn verify(msg: &[u8], signature: &Signature, pk: &PublicKey) -> bool {
-    let mut hasher = sha3::Sha3::shake_256();
+    let mut hasher = Shake256::default();
 
     let [rho, packed_t1] = pk.partition(&[SEED_SIZE / 2, K * T1_PACKED_SIZE]);
     let t1: Vector<PlainPolynomial, K> = Pack::unpack(packed_t1, &t1_unpacker);
@@ -524,15 +539,17 @@ pub fn verify(msg: &[u8], signature: &Signature, pk: &PublicKey) -> bool {
     };
 
     let mut mu = [0u8; SEED_SIZE / 2];
-    hasher.input(pk);
-    hasher.result(&mut mu);
+    hasher.update(pk);
 
-    hasher.reset();
-    hasher.input(&mu);
-    hasher.input(msg);
+    let mut reader = hasher.finalize_xof_reset();
+    reader.read_exact(&mut mu).unwrap();
+
+    hasher.update(&mu);
+    hasher.update(msg);
 
     let mut mu = [0u8; SEED_SIZE];
-    hasher.result(&mut mu);
+    let mut reader = hasher.finalize_xof_reset();
+    reader.read_exact(&mut mu).unwrap();
 
     let challenge = make_challenge(expected_challenge_seed.try_into().unwrap()).into_ntt();
     let a = expand::expand_a(rho.try_into().unwrap());
@@ -544,10 +561,12 @@ pub fn verify(msg: &[u8], signature: &Signature, pk: &PublicKey) -> bool {
         w1.pack(&|slice: &[_; 2]| [(slice[0] | slice[1] << 4) as u8]);
 
     let mut challenge_seed = [0u8; SEED_SIZE / 2];
-    hasher.reset();
-    hasher.input(&mu);
-    hasher.input(&packed_w1);
-    hasher.result(&mut challenge_seed);
+
+    hasher.update(&mu);
+    hasher.update(&packed_w1);
+
+    let mut reader = hasher.finalize_xof_reset();
+    reader.read_exact(&mut challenge_seed).unwrap();
 
     challenge_seed == expected_challenge_seed
 }

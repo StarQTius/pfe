@@ -1,12 +1,15 @@
 use std::mem::size_of;
 
-use crypto::{aessafe, symmetriccipher::BlockEncryptor};
+use aes::{
+    cipher::{BlockEncrypt, KeyInit},
+    Aes256Enc,
+};
 
 const KEY_SIZE: usize = 32;
 const BLOCK_SIZE: usize = 16;
 
 pub struct AesCtr {
-    encryptor: aessafe::AesSafe256Encryptor,
+    encryptor: Aes256Enc,
     iv: [u8; BLOCK_SIZE],
     counter: u16,
     buf: [u8; BLOCK_SIZE],
@@ -19,7 +22,7 @@ impl AesCtr {
         iv[..2].copy_from_slice(&nonce.to_le_bytes());
 
         AesCtr {
-            encryptor: aessafe::AesSafe256Encryptor::new(key),
+            encryptor: Aes256Enc::new(From::from(key)),
             iv,
             counter: 0,
             buf: [0; BLOCK_SIZE],
@@ -32,7 +35,8 @@ impl AesCtr {
 
         for x in retval.iter_mut() {
             if self.i == BLOCK_SIZE {
-                self.encryptor.encrypt_block(&self.iv, &mut self.buf);
+                self.encryptor
+                    .encrypt_block_b2b(From::from(&self.iv), From::from(&mut self.buf));
                 self.counter += 1;
                 self.iv[BLOCK_SIZE - size_of::<u16>()..]
                     .copy_from_slice(&self.counter.to_be_bytes());

@@ -1,4 +1,8 @@
 use crate::*;
+use sha3::{
+    digest::{ExtendableOutputReset, Update},
+    Shake128, Shake256,
+};
 
 mod fixtures;
 
@@ -59,29 +63,32 @@ fn test_make_challenge() {
 #[test]
 fn test_make_keys() {
     let fixtures = fixtures::fixtures();
-    let mut hasher_128 = sha3::Sha3::shake_128();
-    let mut hasher_256 = sha3::Sha3::shake_256();
+    let mut hasher_128 = Shake128::default();
+    let mut hasher_256 = Shake256::default();
 
     for (i, fixture) in fixtures.iter().enumerate() {
         let mut byte_buf = [0; SEED_SIZE];
 
-        hasher_128.reset();
-        hasher_128.input(&((i * 3 + 1) as u64).to_le_bytes());
-        hasher_128.result(&mut byte_buf[..SEED_SIZE / 2]);
+        hasher_128.update(&((i * 3 + 1) as u64).to_le_bytes());
+
+        let mut reader_128 = hasher_128.finalize_xof_reset();
+        reader_128.read(&mut byte_buf[..SEED_SIZE / 2]).unwrap();
 
         let (pk, sk) = make_keys(byte_buf.clone().into_iter()).unwrap();
         let mut pk_hash = [0; 32];
         let mut sk_hash = [0; 32];
 
-        hasher_256.reset();
-        hasher_256.input(&pk);
-        hasher_256.result(&mut pk_hash);
+        hasher_256.update(&pk);
+
+        let mut reader_256 = hasher_256.finalize_xof_reset();
+        reader_256.read(&mut pk_hash).unwrap();
 
         assert!(fixture.pk == pk_hash);
 
-        hasher_256.reset();
-        hasher_256.input(&sk);
-        hasher_256.result(&mut sk_hash);
+        hasher_256.update(&sk);
+
+        let mut reader_256 = hasher_256.finalize_xof_reset();
+        reader_256.read(&mut sk_hash).unwrap();
 
         assert!(fixture.sk == sk_hash);
 
@@ -91,9 +98,12 @@ fn test_make_keys() {
         let signature = sign(&fixture.m, &sk);
 
         let mut signature_hash = [0; 32];
-        hasher_256.reset();
-        hasher_256.input(&signature);
-        hasher_256.result(&mut signature_hash);
+
+        hasher_256.update(&signature);
+
+        let mut reader_256 = hasher_256.finalize_xof_reset();
+        reader_256.read(&mut signature_hash).unwrap();
+
         assert!(signature_hash == fixture.sig);
         assert!(verify(&fixture.m, &signature, &pk));
     }

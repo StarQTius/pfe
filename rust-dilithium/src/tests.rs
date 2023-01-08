@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{counter::SoftwareAesCounter, *};
 use sha3::{
     digest::{ExtendableOutputReset, Update},
     Shake128, Shake256,
@@ -11,7 +11,7 @@ fn test_expand_a() {
     let fixtures = fixtures::fixtures();
 
     for fixture in fixtures {
-        let result = expand::expand_a(fixture.half_seed());
+        let result = expand::expand_a(SoftwareAesCounter::new(fixture.half_seed()));
         assert!(result == fixture.a);
     }
 }
@@ -20,7 +20,7 @@ fn test_expand_a() {
 fn test_expand_s() {
     let fixtures = fixtures::fixtures();
     for fixture in fixtures {
-        let result = expand::expand_s(&fixture.seed, 0);
+        let result = expand::expand_s(SoftwareAesCounter::new(fixture.half_seed()), 0);
         assert!(result == fixture.s);
     }
 }
@@ -29,7 +29,7 @@ fn test_expand_s() {
 fn test_expand_y() {
     let fixtures = fixtures::fixtures();
     for fixture in fixtures {
-        let result = expand::expand_y(&fixture.seed, 0);
+        let result = expand::expand_y(SoftwareAesCounter::new(fixture.half_seed()), 0);
         assert!(result == fixture.y);
     }
 }
@@ -74,7 +74,7 @@ fn test_make_keys() {
         let mut reader_128 = hasher_128.finalize_xof_reset();
         reader_128.read(&mut byte_buf[..SEED_SIZE / 2]).unwrap();
 
-        let (pk, sk) = make_keys(byte_buf.clone().into_iter()).unwrap();
+        let (pk, sk) = make_keys::<SoftwareAesCounter>(byte_buf.clone().into_iter()).unwrap();
         let mut pk_hash = [0; 32];
         let mut sk_hash = [0; 32];
 
@@ -95,7 +95,7 @@ fn test_make_keys() {
         // Not tested separately because fixtures only provide hashes of public and secret keys, so
         // we reuse the keys we generated above
 
-        let signature = sign(&fixture.m, &sk);
+        let signature = sign::<SoftwareAesCounter>(&fixture.m, &sk);
 
         let mut signature_hash = [0; 32];
 
@@ -105,6 +105,6 @@ fn test_make_keys() {
         reader_256.read(&mut signature_hash).unwrap();
 
         assert!(signature_hash == fixture.sig);
-        assert!(verify(&fixture.m, &signature, &pk));
+        assert!(verify::<SoftwareAesCounter>(&fixture.m, &signature, &pk));
     }
 }

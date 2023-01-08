@@ -1,5 +1,6 @@
 use crate::packing::Pack;
 use coefficient::Coefficient;
+use counter::Counter;
 use itertools::Itertools;
 use polynomial::{ntt::NTTPolynomial, plain::PlainPolynomial, NB_COEFFICIENTS};
 use sha3::{
@@ -12,11 +13,12 @@ use std::{
     iter::{once, zip, Iterator},
     mem::{size_of, MaybeUninit},
 };
+use subarray::Subarray;
 use vector::{Matrix, Vector};
 
-mod aes_digest;
 mod array_math;
 mod coefficient;
+pub mod counter;
 mod expand;
 mod packing;
 mod polynomial;
@@ -35,6 +37,7 @@ pub type Signature = [u8; SIGNATURE_SIZE];
 pub const K: usize = 8;
 pub const L: usize = 7;
 pub const SEED_SIZE: usize = 64;
+pub const HALF_SEED_SIZE: usize = 32;
 const Q: coefficient::Coefficient = 8380417;
 const Q_MOD_2POW32_INVERSE: coefficient::Coefficient = 58728449;
 
@@ -59,7 +62,9 @@ const D: coefficient::Coefficient = 13;
 const TAU: usize = 60;
 const SIGNATURE_SIZE: usize = SEED_SIZE / 2 + L * POLYZ_PACKED_SIZE + POLYVECH_PACKED_SIZE;
 
-pub fn make_keys(byte_stream: impl Iterator<Item = u8>) -> Option<(PublicKey, SecretKey)> {
+pub fn make_keys<Ctr: Counter>(
+    byte_stream: impl Iterator<Item = u8>,
+) -> Option<(PublicKey, SecretKey)> {
     let mut hasher = Shake256::default();
 
     let mut rho = [0u8; SEED_SIZE / 2];
@@ -74,9 +79,9 @@ pub fn make_keys(byte_stream: impl Iterator<Item = u8>) -> Option<(PublicKey, Se
     reader.read_exact(&mut rho_prime).unwrap();
     reader.read_exact(&mut key).unwrap();
 
-    let a = expand::expand_a(&rho);
-    let s1 = expand::expand_s::<L>(&rho_prime, 0);
-    let s2 = expand::expand_s::<K>(&rho_prime, L as u16);
+    let a = expand::expand_a(Ctr::new(&rho));
+    let s1 = expand::expand_s::<L>(Ctr::new(subarr!(rho_prime[..HALF_SEED_SIZE])), 0);
+    let s2 = expand::expand_s::<K>(Ctr::new(subarr!(rho_prime[..HALF_SEED_SIZE])), L as u16);
     let (t0, t1) = (make_w(&a, &s1.clone().into_ntt()) + s2.clone()).power2round();
 
     let pk = pack_public_key(&rho, t1);
@@ -217,7 +222,7 @@ pub fn make_challenge(seed: &[u8; SEED_SIZE / 2]) -> PlainPolynomial {
     PlainPolynomial::from(retval)
 }
 
-pub fn sign(msg: &[u8], sk: &SecretKey) -> Signature {
+pub fn sign<Ctr: Counter>(msg: &[u8], sk: &SecretKey) -> Signature {
     let [rho, key, tr, packed_s1, packed_s2, packed_t0] = sk.partition(&[
         SEED_SIZE / 2,
         SEED_SIZE / 2,
@@ -252,10 +257,10 @@ pub fn sign(msg: &[u8], sk: &SecretKey) -> Signature {
     reader.read_exact(&mut rho_prime).unwrap();
 
     // Unwrapping is safe here because the slice is of the right size
-    let a = expand::expand_a(rho.as_ref().try_into().unwrap());
+    let a = expand::expand_a(Ctr::new(rho.as_ref().try_into().unwrap()));
 
     let sample_signature = |nonce| {
-        let y = expand::expand_y(&rho_prime, nonce);
+        let y = expand::expand_y(Ctr::new(subarr!(rho_prime[..HALF_SEED_SIZE])), nonce);
 
         let z = y.clone().into_ntt();
         let w = make_w(&a, &z);
@@ -519,7 +524,7 @@ fn t0_unpacker(chunk: &[u8; 13]) -> [Coefficient; 8] {
     .map(|n| (DBITS_MASK / 2 + 1) - (n & DBITS_MASK))
 }
 
-pub fn verify(msg: &[u8], signature: &Signature, pk: &PublicKey) -> bool {
+pub fn verify<Ctr: Counter>(msg: &[u8], signature: &Signature, pk: &PublicKey) -> bool {
     let mut hasher = Shake256::default();
 
     let [rho, packed_t1] = pk.partition(&[SEED_SIZE / 2, K * T1_PACKED_SIZE]);
@@ -552,7 +557,7 @@ pub fn verify(msg: &[u8], signature: &Signature, pk: &PublicKey) -> bool {
     reader.read_exact(&mut mu).unwrap();
 
     let challenge = make_challenge(expected_challenge_seed.try_into().unwrap()).into_ntt();
-    let a = expand::expand_a(rho.try_into().unwrap());
+    let a = expand::expand_a(Ctr::new(rho.try_into().unwrap()));
     let w1 = &a * &z.into_ntt();
     let t1 = t1.shift_d().into_ntt() * &challenge;
     let w1 = (w1 - t1).reduce_32().into_plain().caddq().use_hint(&hint);

@@ -1,15 +1,16 @@
 use crate::{
-    aes_digest::AesCtr,
     coefficient,
+    counter::Counter,
     polynomial::{ntt::NTTPolynomial, plain::PlainPolynomial, NB_COEFFICIENTS},
-    subarray::{subarray_mut, Subarray},
+    subarr_mut,
+    subarray::Subarray,
     vector::{Matrix, Vector},
-    TryCollectArray, ETA, GAMMA1, K, L, Q, SEED_SIZE,
+    TryCollectArray, ETA, GAMMA1, K, L, Q,
 };
 use itertools::{iproduct, Itertools};
 use std::mem::size_of;
 
-pub fn expand_a(seed: &[u8; SEED_SIZE / 2]) -> Matrix<NTTPolynomial, L, K> {
+pub fn expand_a(mut ctr: impl Counter) -> Matrix<NTTPolynomial, L, K> {
     const _23BITS_MASK: coefficient::Coefficient = (1 << 23) - 1;
     const _23BITS_MASK_SIZE: usize = 3;
 
@@ -19,10 +20,10 @@ pub fn expand_a(seed: &[u8; SEED_SIZE / 2]) -> Matrix<NTTPolynomial, L, K> {
         // For each of the `K * L` coefficients of our return value, we generate a polynomial with
         // rejection sampling
         .map(|(i, j)| {
-            let mut ctr = AesCtr::new(seed, 256 * i + j);
+            ctr.reset(256 * i + j);
 
             let polynomial_it = sample_polynomial(0, Q - 1, |_| {
-                *subarray_mut!(block_buf[.._23BITS_MASK_SIZE]) = ctr.squeeze();
+                *subarr_mut!(block_buf[.._23BITS_MASK_SIZE]) = ctr.squeeze();
                 coefficient::Coefficient::from_le_bytes(block_buf) & _23BITS_MASK
             });
 
@@ -41,13 +42,13 @@ pub fn expand_a(seed: &[u8; SEED_SIZE / 2]) -> Matrix<NTTPolynomial, L, K> {
     Matrix::from(retval_it.try_collect_array().unwrap())
 }
 
-pub fn expand_s<const N: usize>(seed: &[u8; SEED_SIZE], nonce: u16) -> Vector<PlainPolynomial, N> {
+pub fn expand_s<const N: usize>(mut ctr: impl Counter, nonce: u16) -> Vector<PlainPolynomial, N> {
     let mut block_buf_opt: Option<[u8; 1]> = None;
 
     // For each of the `N` coefficients of our return value, we generate a polynomial with
     // rejection sampling
     let retval_it = (nonce..nonce + N as u16).map(|nonce| {
-        let mut ctr = AesCtr::new(&seed[..SEED_SIZE / 2].try_into().unwrap(), nonce);
+        ctr.reset(nonce);
         block_buf_opt = None;
 
         let polynomial_it = sample_polynomial(0, 14, |_| match block_buf_opt {
@@ -70,13 +71,13 @@ pub fn expand_s<const N: usize>(seed: &[u8; SEED_SIZE], nonce: u16) -> Vector<Pl
     Vector::from(retval_it.try_collect_array().unwrap())
 }
 
-pub fn expand_y(seed: &[u8; SEED_SIZE], nonce: u16) -> Vector<PlainPolynomial, L> {
+pub fn expand_y(mut ctr: impl Counter, nonce: u16) -> Vector<PlainPolynomial, L> {
     let mut block_buf = [0; 3];
 
     // For each of the `L` coefficients of our return value, we generate a polynomial with
     // rejection sampling
     let retval_it = (L as u16 * nonce..L as u16 * (nonce + 1)).map(|nonce| {
-        let mut ctr = AesCtr::new(&seed[..SEED_SIZE / 2].try_into().unwrap(), nonce);
+        ctr.reset(nonce);
 
         let polynomial_it = sample_polynomial(1 - GAMMA1, GAMMA1, |i| {
             let k = 4 * (i % 2);
@@ -85,7 +86,7 @@ pub fn expand_y(seed: &[u8; SEED_SIZE], nonce: u16) -> Vector<PlainPolynomial, L
                 block_buf = ctr.squeeze();
             } else {
                 block_buf[0] = block_buf[2];
-                *subarray_mut!(block_buf[1..3]) = ctr.squeeze();
+                *subarr_mut!(block_buf[1..3]) = ctr.squeeze();
             }
 
             let mut coeff = (block_buf[0] as coefficient::Coefficient) >> k;

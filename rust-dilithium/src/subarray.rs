@@ -1,4 +1,18 @@
-macro_rules! subarray_mut {
+#[macro_export]
+macro_rules! subarr {
+    ($array:ident[$start:tt..$end:tt]) => {
+        $array.subarray::<{ $end - $start }, $start, $end>()
+    };
+    ($array:ident[..$end:tt]) => {
+        $array.subarray::<$end, 0, $end>()
+    };
+    ($array:ident[$start:tt..]) => {
+        $array.subarray::<{ $array.len() - $start }, $start, $array.len()>()
+    };
+}
+
+#[macro_export]
+macro_rules! subarr_mut {
     ($array:ident[$start:tt..$end:tt]) => {
         $array.subarray_mut::<{ $end - $start }, $start, $end>()
     };
@@ -9,8 +23,6 @@ macro_rules! subarray_mut {
         $array.subarray_mut::<{ $array.len() - $start }, $start, $array.len()>()
     };
 }
-
-pub(crate) use subarray_mut;
 
 macro_rules! const_assert_lesser {
     ($lhs:expr, $rhs:expr) => {

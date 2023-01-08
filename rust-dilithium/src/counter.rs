@@ -5,10 +5,16 @@ use aes::{
     Aes256Enc,
 };
 
-const KEY_SIZE: usize = 32;
-const BLOCK_SIZE: usize = 16;
+pub const KEY_SIZE: usize = 32;
+pub const BLOCK_SIZE: usize = 16;
 
-pub struct AesCtr {
+pub trait Counter {
+    fn new(key: &[u8; KEY_SIZE]) -> Self;
+    fn reset(&mut self, nonce: u16);
+    fn squeeze<const N: usize>(&mut self) -> [u8; N];
+}
+
+pub struct SoftwareAesCounter {
     encryptor: Aes256Enc,
     iv: [u8; BLOCK_SIZE],
     counter: u16,
@@ -16,21 +22,25 @@ pub struct AesCtr {
     i: usize,
 }
 
-impl AesCtr {
-    pub fn new(key: &[u8; KEY_SIZE], nonce: u16) -> Self {
-        let mut iv = [0u8; BLOCK_SIZE];
-        iv[..2].copy_from_slice(&nonce.to_le_bytes());
-
-        AesCtr {
+impl Counter for SoftwareAesCounter {
+    fn new(key: &[u8; KEY_SIZE]) -> Self {
+        Self {
             encryptor: Aes256Enc::new(From::from(key)),
-            iv,
+            iv: [0; BLOCK_SIZE],
             counter: 0,
             buf: [0; BLOCK_SIZE],
             i: BLOCK_SIZE,
         }
     }
 
-    pub fn squeeze<const N: usize>(&mut self) -> [u8; N] {
+    fn reset(&mut self, nonce: u16) {
+        self.iv.fill(0);
+        self.iv[..2].copy_from_slice(&nonce.to_le_bytes());
+        self.counter = 0;
+        self.i = BLOCK_SIZE;
+    }
+
+    fn squeeze<const N: usize>(&mut self) -> [u8; N] {
         let mut retval = [0; N];
 
         for x in retval.iter_mut() {

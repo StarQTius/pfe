@@ -1,0 +1,14 @@
+[package]
+name = "rust-dilithium-esp"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+pio = ["esp-idf-sys/pio"]
+
+[dependencies]
+esp-idf-sys = { version = "0.31.11", features = ["binstart"] }
+rust-dilithium = { path = "../rust-dilithium" }
+
+[build-dependencies]
+embuild = "0.30.4"

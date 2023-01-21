@@ -1,11 +1,10 @@
 use crate::{
     coefficient,
-    polynomial::{ntt::NTTPolynomial, plain::PlainPolynomial, NB_COEFFICIENTS},
+    polynomial::{ntt::NTTPolynomial, plain::PlainPolynomial},
     vector::{Matrix, Vector},
-    TryCollectArray, K, L, SEED_SIZE,
+    ArrayChunks, TryCollectArray, K, L, SEED_SIZE,
 };
 
-use itertools::Itertools;
 use nom::{
     bytes::complete::{tag, take, take_until, take_while},
     character::complete::char,
@@ -194,21 +193,13 @@ fn parse_matrix(s: &str) -> IResult<&str, Matrix<NTTPolynomial, L, K>> {
         .flatten()
         .map(|s| coefficient::Coefficient::from_str_radix(s, 10).unwrap());
 
-    let polynomial_chunks = coeff_it.chunks(NB_COEFFICIENTS);
-
-    let polynomial_it = polynomial_chunks
-        .into_iter()
-        .map(|it| it.try_collect_array().unwrap())
-        .map(NTTPolynomial::from);
-
-    let vector_chunks = polynomial_it.chunks(L);
-
-    let vector_it = vector_chunks
-        .into_iter()
-        .map(|it| it.try_collect_array().unwrap())
+    let retval_it = coeff_it
+        ._array_chunks()
+        .map(NTTPolynomial::from)
+        ._array_chunks()
         .map(Vector::from);
 
-    Ok((s, vector_it.try_collect_array().unwrap().into()))
+    Ok((s, retval_it.try_collect_array().unwrap().into()))
 }
 
 fn parse_bracket_lists(s: &str) -> IResult<&str, Vec<Vec<&str>>> {
@@ -227,14 +218,9 @@ fn parse_poly_list<const N: usize>(s: &str) -> IResult<&str, Vector<PlainPolynom
         .flatten()
         .map(|s| coefficient::Coefficient::from_str_radix(s, 10).unwrap());
 
-    let polynomial_chunks = coeff_it.chunks(NB_COEFFICIENTS);
+    let retval_it = coeff_it._array_chunks().map(PlainPolynomial::from);
 
-    let polynomial_it = polynomial_chunks
-        .into_iter()
-        .map(|it| it.try_collect_array().unwrap())
-        .map(PlainPolynomial::from);
-
-    Ok((s, polynomial_it.try_collect_array().unwrap().into()))
+    Ok((s, retval_it.try_collect_array().unwrap().into()))
 }
 
 fn parse_bracket_list(s: &str) -> IResult<&str, Vec<&str>> {

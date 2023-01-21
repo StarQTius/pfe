@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), no_std)]
+
 use crate::packing::Pack;
 use coefficient::Coefficient;
 use core::{
@@ -6,7 +8,6 @@ use core::{
     mem::{size_of, MaybeUninit},
 };
 use counter::Counter;
-use itertools::Itertools;
 use polynomial::{ntt::NTTPolynomial, plain::PlainPolynomial, NB_COEFFICIENTS};
 use sha3::{
     digest::{ExtendableOutput, ExtendableOutputReset, Update, XofReader},
@@ -327,8 +328,11 @@ fn make_signature(
 
     let mut retval = [0; SIGNATURE_SIZE];
 
-    let (hint_positions, hint_numbers_by_polynomial): ([_; K], _) =
-        unzip(hint.iter().map(pack_hint_polynomial)).unwrap();
+    let (hint_positions, hint_numbers_by_polynomial): ([_; K], _) = hint
+        .iter()
+        .map(pack_hint_polynomial)
+        .unzip_into_arrays()
+        .unwrap();
 
     let [retval_challenge_seed, retval_packed_z, retval_packed_hint] =
         retval.partition_mut(&[SEED_SIZE / 2, L * POLYZ_PACKED_SIZE, POLYVECH_PACKED_SIZE]);
@@ -364,23 +368,41 @@ fn make_signature(
     retval
 }
 
-fn unzip<T1, T2, const N: usize>(
-    mut it: impl Iterator<Item = (T1, T2)>,
-) -> Option<([T1; N], [T2; N])> {
-    let mut retval1: [_; N] = from_fn(|_| MaybeUninit::uninit());
-    let mut retval2: [_; N] = from_fn(|_| MaybeUninit::uninit());
+trait Tee {
+    type Iter;
 
-    for (lhs1, lhs2) in zip(retval1.iter_mut(), retval2.iter_mut()) {
-        let (rhs1, rhs2) = it.next()?;
-        lhs1.write(rhs1);
-        lhs2.write(rhs2);
+    fn tee(self) -> (Self::Iter, Self::Iter);
+}
+
+impl<Iter: Iterator + Clone> Tee for Iter {
+    type Iter = Self;
+
+    fn tee(self) -> (Self::Iter, Self::Iter) {
+        (self.clone(), self)
     }
+}
 
-    unsafe {
-        Some((
-            retval1.as_ptr().cast::<[T1; N]>().read(),
-            retval2.as_ptr().cast::<[T2; N]>().read(),
-        ))
+trait UnzipIntoArrays<T1, T2> {
+    fn unzip_into_arrays<const N: usize>(self) -> Option<([T1; N], [T2; N])>;
+}
+
+impl<T: Iterator<Item = (T1, T2)>, T1, T2> UnzipIntoArrays<T1, T2> for T {
+    fn unzip_into_arrays<const N: usize>(mut self) -> Option<([T1; N], [T2; N])> {
+        let mut retval1: [_; N] = from_fn(|_| MaybeUninit::uninit());
+        let mut retval2: [_; N] = from_fn(|_| MaybeUninit::uninit());
+
+        for (lhs1, lhs2) in zip(retval1.iter_mut(), retval2.iter_mut()) {
+            let (rhs1, rhs2) = self.next()?;
+            lhs1.write(rhs1);
+            lhs2.write(rhs2);
+        }
+
+        unsafe {
+            Some((
+                retval1.as_ptr().cast::<[T1; N]>().read(),
+                retval2.as_ptr().cast::<[T2; N]>().read(),
+            ))
+        }
     }
 }
 
@@ -409,12 +431,7 @@ fn make_hint(
         })
         .tee();
 
-    let hint = hint_it
-        .chunks(NB_COEFFICIENTS)
-        .into_iter()
-        .filter_map(|it| it.try_collect_array())
-        .try_collect_array()
-        .unwrap();
+    let hint = hint_it._array_chunks().try_collect_array().unwrap();
 
     (hint, count_it.filter(|&b| b).count())
 }
@@ -650,6 +667,34 @@ fn try_from_fn<T, const N: usize>(mut f: impl FnMut(usize) -> Option<T>) -> Opti
     }
 
     unsafe { Some(retval.as_ptr().cast::<[T; N]>().read()) }
+}
+
+trait ArrayChunks<Iter: Iterator, const N: usize> {
+    fn _array_chunks(self) -> ArrayChunksIterator<Iter, N>;
+}
+
+impl<Iter: Iterator, const N: usize> ArrayChunks<Iter, N> for Iter {
+    fn _array_chunks(self) -> ArrayChunksIterator<Iter, N> {
+        ArrayChunksIterator::new(self)
+    }
+}
+
+struct ArrayChunksIterator<Iter: Iterator, const N: usize> {
+    it: Iter,
+}
+
+impl<Iter: Iterator, const N: usize> ArrayChunksIterator<Iter, N> {
+    fn new(it: Iter) -> Self {
+        Self { it }
+    }
+}
+
+impl<Iter: Iterator, const N: usize> Iterator for ArrayChunksIterator<Iter, N> {
+    type Item = [Iter::Item; N];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        try_from_fn(|_| self.it.next())
+    }
 }
 
 trait TryCollectArray<T, const N: usize> {

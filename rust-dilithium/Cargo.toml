@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-itertools = "0.10.1"
-sha3 = "0.10.6"
-aes = "0.8.2"
+itertools = { version = "0.10.1", default-features = false }
+sha3 = { version = "0.10.6", default-features = false }
+aes = { version = "0.8.2", default-features = false }
 
 [dev-dependencies]
 nom = "7.1.1"

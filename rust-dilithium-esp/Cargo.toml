@@ -7,8 +7,10 @@ edition = "2021"
 pio = ["esp-idf-sys/pio"]
 
 [dependencies]
-esp-idf-sys = { version = "0.31.11", features = ["binstart"] }
-rust-dilithium = { path = "../rust-dilithium" }
+log = { version = "0.4", default-features = false }
+esp-idf-sys = { version = "0.31.11", default-features = false, features = ["binstart", "panic_handler", "alloc_handler"] }
+esp-idf-svc = { version = "0.43.1", default-features = false, features = ["alloc"] }
+rust-dilithium = { path = "../rust-dilithium", default-features = false }
 
 [build-dependencies]
 embuild = "0.30.4"

@@ -5,10 +5,10 @@ use crate::{
     subarr_mut,
     subarray::Subarray,
     vector::{Matrix, Vector},
-    TryCollectArray, ETA, GAMMA1, K, L, Q,
+    ArrayChunks, TryCollectArray, ETA, GAMMA1, K, L, Q,
 };
 use core::mem::size_of;
-use itertools::{iproduct, Itertools};
+use itertools::iproduct;
 
 pub fn expand_a(mut ctr: impl Counter) -> Matrix<NTTPolynomial, L, K> {
     const _23BITS_MASK: coefficient::Coefficient = (1 << 23) - 1;
@@ -16,7 +16,7 @@ pub fn expand_a(mut ctr: impl Counter) -> Matrix<NTTPolynomial, L, K> {
 
     let mut block_buf = [0; size_of::<coefficient::Coefficient>()];
 
-    let retval_chunks = iproduct!(0..K as u16, 0..L as u16)
+    let retval_it = iproduct!(0..K as u16, 0..L as u16)
         // For each of the `K * L` coefficients of our return value, we generate a polynomial with
         // rejection sampling
         .map(|(i, j)| {
@@ -31,11 +31,7 @@ pub fn expand_a(mut ctr: impl Counter) -> Matrix<NTTPolynomial, L, K> {
         })
         // We divide the result into `K` chunks of size `L` and each chunk is used to create a
         // `Vector` of size L
-        .chunks(L);
-
-    let retval_it = retval_chunks
-        .into_iter()
-        .filter_map(|it| it.try_collect_array())
+        ._array_chunks()
         .map(Vector::from);
 
     // Therefore, unwrapping here should be safe

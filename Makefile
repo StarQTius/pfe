@@ -1,8 +1,8 @@
 all:
-	cd rust-dilithium-esp && cargo build
+	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --release
 
 check: rust-dilithium/rsrc/fixtures.txt
-	cd rust-dilithium && cargo test
+	RUSTC_WRAPPER=sccache cd rust-dilithium && cargo test
 
 rust-dilithium/rsrc/fixtures.txt:
 	make -C dilithium/ref -j4

@@ -72,7 +72,7 @@ fn test_make_keys() {
         hasher_128.update(&((i * 3 + 1) as u64).to_le_bytes());
 
         let mut reader_128 = hasher_128.finalize_xof_reset();
-        reader_128.read(&mut byte_buf[..SEED_SIZE / 2]).unwrap();
+        reader_128.read(&mut byte_buf[..SEED_SIZE / 2]);
 
         let (pk, sk) = make_keys::<SoftwareAesCounter>(byte_buf.clone().into_iter()).unwrap();
         let mut pk_hash = [0; 32];
@@ -81,14 +81,14 @@ fn test_make_keys() {
         hasher_256.update(&pk);
 
         let mut reader_256 = hasher_256.finalize_xof_reset();
-        reader_256.read(&mut pk_hash).unwrap();
+        reader_256.read(&mut pk_hash);
 
         assert!(fixture.pk == pk_hash);
 
         hasher_256.update(&sk);
 
         let mut reader_256 = hasher_256.finalize_xof_reset();
-        reader_256.read(&mut sk_hash).unwrap();
+        reader_256.read(&mut sk_hash);
 
         assert!(fixture.sk == sk_hash);
 
@@ -102,7 +102,7 @@ fn test_make_keys() {
         hasher_256.update(&signature);
 
         let mut reader_256 = hasher_256.finalize_xof_reset();
-        reader_256.read(&mut signature_hash).unwrap();
+        reader_256.read(&mut signature_hash);
 
         assert!(signature_hash == fixture.sig);
         assert!(verify::<SoftwareAesCounter>(&fixture.m, &signature, &pk));

@@ -1,5 +1,5 @@
 use crate::{D, GAMMA2, Q, Q_MOD_2POW32_INVERSE};
-use std::num::Wrapping;
+use core::num::Wrapping;
 
 pub type Coefficient = i32;
 

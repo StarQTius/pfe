@@ -7,8 +7,8 @@ use crate::{
     vector::{Matrix, Vector},
     TryCollectArray, ETA, GAMMA1, K, L, Q,
 };
+use core::mem::size_of;
 use itertools::{iproduct, Itertools};
-use std::mem::size_of;
 
 pub fn expand_a(mut ctr: impl Counter) -> Matrix<NTTPolynomial, L, K> {
     const _23BITS_MASK: coefficient::Coefficient = (1 << 23) - 1;

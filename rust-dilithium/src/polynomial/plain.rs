@@ -5,7 +5,7 @@ use crate::{
     polynomial::{ntt::NTTPolynomial, Coefficients, ZETAS},
     TryCollectArray,
 };
-use std::{
+use core::{
     iter::zip,
     ops::{Add, AddAssign, Sub, SubAssign},
     slice,

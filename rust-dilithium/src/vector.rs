@@ -1,4 +1,4 @@
-use std::{
+use core::{
     array::from_fn,
     iter::zip,
     ops::{Add, AddAssign, Mul, Sub, SubAssign},

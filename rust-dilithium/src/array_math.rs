@@ -1,4 +1,4 @@
-use std::{
+use core::{
     iter::{zip, Sum},
     ops::{AddAssign, Mul, SubAssign},
 };

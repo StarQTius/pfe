@@ -1,17 +1,16 @@
 use crate::packing::Pack;
 use coefficient::Coefficient;
+use core::{
+    array::from_fn,
+    iter::{once, zip, Iterator},
+    mem::{size_of, MaybeUninit},
+};
 use counter::Counter;
 use itertools::Itertools;
 use polynomial::{ntt::NTTPolynomial, plain::PlainPolynomial, NB_COEFFICIENTS};
 use sha3::{
-    digest::{ExtendableOutput, ExtendableOutputReset, Update},
+    digest::{ExtendableOutput, ExtendableOutputReset, Update, XofReader},
     Shake256,
-};
-use std::{
-    array::from_fn,
-    io::Read,
-    iter::{once, zip, Iterator},
-    mem::{size_of, MaybeUninit},
 };
 use subarray::Subarray;
 use vector::{Matrix, Vector};
@@ -75,9 +74,9 @@ pub fn make_keys<Ctr: Counter>(
     hasher.update(&seed);
 
     let mut reader = hasher.finalize_xof_reset();
-    reader.read_exact(&mut rho).unwrap();
-    reader.read_exact(&mut rho_prime).unwrap();
-    reader.read_exact(&mut key).unwrap();
+    reader.read(&mut rho);
+    reader.read(&mut rho_prime);
+    reader.read(&mut key);
 
     let a = expand::expand_a(Ctr::new(&rho));
     let s1 = expand::expand_s::<L>(Ctr::new(subarr!(rho_prime[..HALF_SEED_SIZE])), 0);
@@ -91,7 +90,7 @@ pub fn make_keys<Ctr: Counter>(
     hasher.update(&pk);
 
     let mut reader = hasher.finalize_xof_reset();
-    reader.read_exact(&mut tr).unwrap();
+    reader.read(&mut tr);
 
     let sk = make_private_key(&rho, &tr, &key, t0, s1, s2)?;
 
@@ -200,7 +199,7 @@ pub fn make_challenge(seed: &[u8; SEED_SIZE / 2]) -> PlainPolynomial {
     hasher.update(seed);
 
     let mut reader = hasher.finalize_xof();
-    reader.read_exact(&mut sign_bits_buf).unwrap();
+    reader.read(&mut sign_bits_buf);
 
     let mut sign_bits = u64::from_le_bytes(sign_bits_buf) & FIRST_TAU_BITS_MASK;
 
@@ -208,7 +207,7 @@ pub fn make_challenge(seed: &[u8; SEED_SIZE / 2]) -> PlainPolynomial {
         let chosen_bit_index = (0..)
             .map(|_| {
                 let mut buf = [0u8; 1];
-                reader.read_exact(&mut buf).unwrap();
+                reader.read(&mut buf);
                 buf[0] as usize
             })
             .find(|&bit_index| bit_index <= last_bit_index)
@@ -246,7 +245,7 @@ pub fn sign<Ctr: Counter>(msg: &[u8], sk: &SecretKey) -> Signature {
 
     let mut mu = [0u8; SEED_SIZE];
     let mut reader = hasher.finalize_xof_reset();
-    reader.read_exact(&mut mu).unwrap();
+    reader.read(&mut mu);
 
     let mut rho_prime = [0u8; SEED_SIZE];
 
@@ -254,7 +253,7 @@ pub fn sign<Ctr: Counter>(msg: &[u8], sk: &SecretKey) -> Signature {
     hasher.update(&mu);
 
     let mut reader = hasher.finalize_xof_reset();
-    reader.read_exact(&mut rho_prime).unwrap();
+    reader.read(&mut rho_prime);
 
     // Unwrapping is safe here because the slice is of the right size
     let a = expand::expand_a(Ctr::new(rho.as_ref().try_into().unwrap()));
@@ -275,7 +274,7 @@ pub fn sign<Ctr: Counter>(msg: &[u8], sk: &SecretKey) -> Signature {
         hasher.update(&packed_w1);
 
         let mut reader = hasher.finalize_xof_reset();
-        reader.read_exact(&mut challenge_seed).unwrap();
+        reader.read(&mut challenge_seed);
 
         let challenge = make_challenge(&challenge_seed).into_ntt();
         let z = ((s1.clone() * &challenge).into_plain() + y).reduce_32();
@@ -547,14 +546,14 @@ pub fn verify<Ctr: Counter>(msg: &[u8], signature: &Signature, pk: &PublicKey) -
     hasher.update(pk);
 
     let mut reader = hasher.finalize_xof_reset();
-    reader.read_exact(&mut mu).unwrap();
+    reader.read(&mut mu);
 
     hasher.update(&mu);
     hasher.update(msg);
 
     let mut mu = [0u8; SEED_SIZE];
     let mut reader = hasher.finalize_xof_reset();
-    reader.read_exact(&mut mu).unwrap();
+    reader.read(&mut mu);
 
     let challenge = make_challenge(expected_challenge_seed.try_into().unwrap()).into_ntt();
     let a = expand::expand_a(Ctr::new(rho.try_into().unwrap()));
@@ -571,7 +570,7 @@ pub fn verify<Ctr: Counter>(msg: &[u8], signature: &Signature, pk: &PublicKey) -
     hasher.update(&packed_w1);
 
     let mut reader = hasher.finalize_xof_reset();
-    reader.read_exact(&mut challenge_seed).unwrap();
+    reader.read(&mut challenge_seed);
 
     challenge_seed == expected_challenge_seed
 }

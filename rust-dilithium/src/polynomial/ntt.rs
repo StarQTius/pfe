@@ -3,7 +3,7 @@ use crate::{
     coefficient::{self, Coefficient},
     polynomial::{plain::PlainPolynomial, Coefficients, ZETAS},
 };
-use std::{
+use core::{
     iter::{zip, Sum},
     ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign},
     slice,

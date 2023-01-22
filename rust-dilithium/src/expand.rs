@@ -10,6 +10,7 @@ use crate::{
 use core::mem::size_of;
 use itertools::iproduct;
 
+#[inline(never)]
 pub fn expand_a(mut ctr: impl Counter) -> Matrix<NTTPolynomial, L, K> {
     const _23BITS_MASK: coefficient::Coefficient = (1 << 23) - 1;
     const _23BITS_MASK_SIZE: usize = 3;
@@ -38,6 +39,7 @@ pub fn expand_a(mut ctr: impl Counter) -> Matrix<NTTPolynomial, L, K> {
     Matrix::from(retval_it.try_collect_array().unwrap())
 }
 
+#[inline(never)]
 pub fn expand_s<const N: usize>(mut ctr: impl Counter, nonce: u16) -> Vector<PlainPolynomial, N> {
     let mut block_buf_opt: Option<[u8; 1]> = None;
 
@@ -67,6 +69,7 @@ pub fn expand_s<const N: usize>(mut ctr: impl Counter, nonce: u16) -> Vector<Pla
     Vector::from(retval_it.try_collect_array().unwrap())
 }
 
+#[inline(never)]
 pub fn expand_y(mut ctr: impl Counter, nonce: u16) -> Vector<PlainPolynomial, L> {
     let mut block_buf = [0; 3];
 

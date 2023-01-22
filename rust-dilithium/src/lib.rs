@@ -223,6 +223,23 @@ pub fn make_challenge(seed: &[u8; SEED_SIZE / 2]) -> PlainPolynomial {
 }
 
 pub fn sign<Ctr: Counter>(msg: &[u8], sk: &SecretKey) -> Signature {
+    #[inline(never)]
+    fn compute_ss_and_t(
+        packed_s1: &[u8],
+        packed_s2: &[u8],
+        packed_t0: &[u8],
+    ) -> (
+        Vector<NTTPolynomial, L>,
+        Vector<NTTPolynomial, K>,
+        Vector<NTTPolynomial, K>,
+    ) {
+        let s1: Vector<PlainPolynomial, L> = Pack::unpack(packed_s1, &eta_unpacker);
+        let s2: Vector<PlainPolynomial, K> = Pack::unpack(packed_s2, &eta_unpacker);
+        let t0: Vector<PlainPolynomial, K> = Pack::unpack(packed_t0, &t0_unpacker);
+
+        (s1.into_ntt(), s2.into_ntt(), t0.into_ntt())
+    }
+
     let [rho, key, tr, packed_s1, packed_s2, packed_t0] = sk.partition(&[
         SEED_SIZE / 2,
         SEED_SIZE / 2,
@@ -232,13 +249,7 @@ pub fn sign<Ctr: Counter>(msg: &[u8], sk: &SecretKey) -> Signature {
         K * T0_PACKED_SIZE,
     ]);
 
-    let s1: Vector<PlainPolynomial, L> = Pack::unpack(packed_s1, &eta_unpacker);
-    let s2: Vector<PlainPolynomial, K> = Pack::unpack(packed_s2, &eta_unpacker);
-    let t0: Vector<PlainPolynomial, K> = Pack::unpack(packed_t0, &t0_unpacker);
-
-    let s1 = s1.into_ntt();
-    let s2 = s2.into_ntt();
-    let t0 = t0.into_ntt();
+    let (s1, s2, t0) = compute_ss_and_t(packed_s1, packed_s2, packed_t0);
 
     let mut hasher = Shake256::default();
     hasher.update(tr);
@@ -259,56 +270,58 @@ pub fn sign<Ctr: Counter>(msg: &[u8], sk: &SecretKey) -> Signature {
     // Unwrapping is safe here because the slice is of the right size
     let a = expand::expand_a(Ctr::new(rho.as_ref().try_into().unwrap()));
 
-    let sample_signature = |nonce| {
-        let y = expand::expand_y(Ctr::new(subarr!(rho_prime[..HALF_SEED_SIZE])), nonce);
-
-        let z = y.clone().into_ntt();
-        let w = make_w(&a, &z);
-
-        let (w0, w1) = w.decompose();
-        let mut challenge_seed = [0u8; SEED_SIZE / 2];
-
-        let packed_w1: [_; K * NB_COEFFICIENTS / 2] =
-            w1.pack(&|chunk: &[Coefficient; 2]| [(chunk[0] | (chunk[1] << 4)) as u8]);
-
-        hasher.update(&mu);
-        hasher.update(&packed_w1);
-
-        let mut reader = hasher.finalize_xof_reset();
-        reader.read(&mut challenge_seed);
-
-        let challenge = make_challenge(&challenge_seed).into_ntt();
-        let z = ((s1.clone() * &challenge).into_plain() + y).reduce_32();
-        if z.max() >= GAMMA1 - BETA {
-            return None;
-        }
-
-        let h = (s2.clone() * &challenge).into_plain();
-        let w0 = (w0 - h).reduce_32();
-        if w0.max() >= GAMMA2 - BETA {
-            return None;
-        }
-
-        let h = (t0.clone() * &challenge).into_plain().reduce_32();
-        if h.max() >= GAMMA2 - BETA {
-            return None;
-        }
-
-        let h = (t0.clone() * &challenge).into_plain().reduce_32();
-        if h.max() >= GAMMA2 {
-            return None;
-        }
-
-        let (hint, hint_bits_count) = make_hint(&(w0 + h), &w1);
-        if hint_bits_count > OMEGA {
-            return None;
-        }
-
-        Some(make_signature(&challenge_seed, &z, &hint))
-    };
-
     // Will not panic since input iterator is infinite
-    (0..).find_map(sample_signature).unwrap()
+    let sample = |nonce| sample_signature::<Ctr>(nonce, &rho_prime, &a, &mu, &s1, &s2, &t0);
+    (0..).find_map(sample).unwrap()
+}
+
+#[inline(never)]
+fn sample_signature<Ctr: Counter>(
+    nonce: u16,
+    rho_prime: &[u8; SEED_SIZE],
+    a: &Matrix<NTTPolynomial, L, K>,
+    mu: &[u8; SEED_SIZE],
+    s1: &Vector<NTTPolynomial, L>,
+    s2: &Vector<NTTPolynomial, K>,
+    t0: &Vector<NTTPolynomial, K>,
+) -> Option<Signature> {
+    let mut hasher = Shake256::default();
+
+    let y = expand::expand_y(Ctr::new(subarr!(rho_prime[..HALF_SEED_SIZE])), nonce);
+    let (w0, w1) = make_w(a, &y.clone().into_ntt()).decompose();
+    let mut challenge_seed = [0u8; SEED_SIZE / 2];
+
+    let packed_w1: [_; K * NB_COEFFICIENTS / 2] =
+        w1.pack(&|chunk: &[Coefficient; 2]| [(chunk[0] | (chunk[1] << 4)) as u8]);
+
+    hasher.update(mu);
+    hasher.update(&packed_w1);
+
+    let mut reader = hasher.finalize_xof_reset();
+    reader.read(&mut challenge_seed);
+
+    let challenge = make_challenge(&challenge_seed).into_ntt();
+    let z = ((s1.clone() * &challenge).into_plain() + y).reduce_32();
+    if z.max() >= GAMMA1 - BETA {
+        return None;
+    }
+
+    let cs2 = (w0 - (s2.clone() * &challenge).into_plain()).reduce_32();
+    if cs2.max() >= GAMMA2 - BETA {
+        return None;
+    }
+
+    let ct = (t0.clone() * &challenge).into_plain().reduce_32();
+    if ct.max() >= GAMMA2 - BETA {
+        return None;
+    }
+
+    let (hint, hint_bits_count) = make_hint(cs2, ct, &w1);
+    if hint_bits_count > OMEGA {
+        return None;
+    }
+
+    Some(make_signature(&challenge_seed, &z, &hint))
 }
 
 fn make_signature(
@@ -419,9 +432,12 @@ fn z_packer(chunk: &[Coefficient; 2]) -> [u8; 5] {
 }
 
 fn make_hint(
-    w0: &Vector<PlainPolynomial, K>,
+    cs2: Vector<PlainPolynomial, K>,
+    ct: Vector<PlainPolynomial, K>,
     w1: &Vector<PlainPolynomial, K>,
 ) -> ([[bool; POLYNOMIAL_DEGREE]; K], usize) {
+    let w0 = cs2 + ct;
+
     let w0_it = w0.into_iter().flatten();
     let w1_it = w1.into_iter().flatten();
 

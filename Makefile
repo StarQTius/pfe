@@ -1,13 +1,21 @@
 all: build
 
-build:
-	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --release
+build: compare speed
+
+speed:
+	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example speed --release
+
+compare:
+	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example compare --release
 
 check: rust-dilithium/rsrc/fixtures.txt
 	RUSTC_WRAPPER=sccache cd rust-dilithium && cargo test
 
-flash: build
-	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/rust-dilithium-esp
+flash_speed: speed
+	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/speed
+
+flash_compare: compare
+	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/compare
 
 rust-dilithium/rsrc/fixtures.txt:
 	make -C dilithium/ref -j4

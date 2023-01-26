@@ -67,14 +67,14 @@ fn test_make_keys() {
     let mut hasher_256 = Shake256::default();
 
     for (i, fixture) in fixtures.iter().enumerate() {
-        let mut byte_buf = [0; SEED_SIZE];
+        let mut byte_buf = [0; SEED_SIZE / 2];
 
         hasher_128.update(&((i * 3 + 1) as u64).to_le_bytes());
 
         let mut reader_128 = hasher_128.finalize_xof_reset();
-        reader_128.read(&mut byte_buf[..SEED_SIZE / 2]);
+        reader_128.read(&mut byte_buf);
 
-        let (pk, sk) = make_keys::<SoftwareAesCounter>(byte_buf.clone().into_iter()).unwrap();
+        let (pk, sk) = make_keys::<SoftwareAesCounter>(&byte_buf).unwrap();
         let mut pk_hash = [0; 32];
         let mut sk_hash = [0; 32];
 

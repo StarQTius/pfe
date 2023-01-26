@@ -33,6 +33,7 @@ pub type Polynomial = [coefficient::Coefficient; POLYNOMIAL_DEGREE];
 pub type PublicKey = [u8; PUBLIC_KEY_SIZE];
 pub type SecretKey = [u8; SECRET_KEY_SIZE];
 pub type Signature = [u8; SIGNATURE_SIZE];
+pub type Seed = [u8; SEED_SIZE / 2];
 
 pub const K: usize = 8;
 pub const L: usize = 7;
@@ -62,17 +63,14 @@ const D: coefficient::Coefficient = 13;
 const TAU: usize = 60;
 const SIGNATURE_SIZE: usize = SEED_SIZE / 2 + L * POLYZ_PACKED_SIZE + POLYVECH_PACKED_SIZE;
 
-pub fn make_keys<Ctr: Counter>(
-    byte_stream: impl Iterator<Item = u8>,
-) -> Option<(PublicKey, SecretKey)> {
+pub fn make_keys<Ctr: Counter>(seed: &Seed) -> Option<(PublicKey, SecretKey)> {
     let mut hasher = Shake256::default();
 
     let mut rho = [0u8; SEED_SIZE / 2];
     let mut rho_prime = [0u8; SEED_SIZE];
     let mut key = [0u8; SEED_SIZE / 2];
 
-    let seed: [u8; SEED_SIZE / 2] = byte_stream.try_collect_array()?;
-    hasher.update(&seed);
+    hasher.update(seed);
 
     let mut reader = hasher.finalize_xof_reset();
     reader.read(&mut rho);

@@ -42,8 +42,8 @@ pub const HALF_SEED_SIZE: usize = 32;
 const Q: coefficient::Coefficient = 8380417;
 const Q_MOD_2POW32_INVERSE: coefficient::Coefficient = 58728449;
 
-const PUBLIC_KEY_SIZE: usize = SEED_SIZE / 2 + K as usize * T1_PACKED_SIZE;
-const SECRET_KEY_SIZE: usize = 3 * SEED_SIZE / 2
+pub const PUBLIC_KEY_SIZE: usize = SEED_SIZE / 2 + K as usize * T1_PACKED_SIZE;
+pub const SECRET_KEY_SIZE: usize = 3 * SEED_SIZE / 2
     + L as usize * ETA_PACKED_SIZE
     + K as usize * ETA_PACKED_SIZE
     + K * T0_PACKED_SIZE;

@@ -1,11 +1,10 @@
 #![no_std]
 #![no_main]
 
-use esp_idf_sys::esp_task_wdt_init;
+use esp_idf_sys::{dilithium_reference_crypto_sign_signature, esp_task_wdt_init};
 use log::info;
-use rust_dilithium_esp::{
-    compute_hardware, compute_reference, compute_software, true_random_seed, Timer,
-};
+use rust_dilithium::{counter::SoftwareAesCounter, make_keys, sign, SEED_SIZE, SIGNATURE_SIZE};
+use rust_dilithium_esp::{true_random_seed, HardwareAesCounter, Timer};
 
 type Chronometer = Timer<0, 0>;
 
@@ -22,11 +21,13 @@ fn main() {
 
     info!(file!());
 
+    let (_, sk) = make_keys::<HardwareAesCounter>(&true_random_seed()).unwrap();
+
     let software_time = {
         let chronometer = Chronometer::start();
 
         (0..TRIALS_NB).for_each(|_| {
-            compute_software(&true_random_seed(), &true_random_seed());
+            sign::<SoftwareAesCounter>(&true_random_seed(), &sk);
         });
         chronometer.get()
     };
@@ -39,7 +40,7 @@ fn main() {
         let chronometer = Chronometer::start();
 
         (0..TRIALS_NB).for_each(|_| {
-            compute_hardware(&true_random_seed(), &true_random_seed());
+            sign::<HardwareAesCounter>(&true_random_seed(), &sk);
         });
         chronometer.get()
     };
@@ -48,11 +49,20 @@ fn main() {
         hardware_time / TRIALS_NB as u64
     );
 
-    let reference_time = {
+    let reference_time = unsafe {
+        let mut sig = [0u8; SIGNATURE_SIZE];
+        let mut siglen = 0usize;
+
         let chronometer = Chronometer::start();
 
         (0..TRIALS_NB).for_each(|_| {
-            compute_reference(&true_random_seed());
+            dilithium_reference_crypto_sign_signature(
+                sig.as_mut_ptr(),
+                &mut siglen,
+                true_random_seed().as_ptr(),
+                SEED_SIZE / 2,
+                sk.as_ptr(),
+            );
         });
         chronometer.get()
     };

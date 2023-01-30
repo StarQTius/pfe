@@ -6,13 +6,13 @@ use esp_idf_sys::{
     dilithium_reference_crypto_sign_verify, esp_aes_context, esp_aes_crypt_ecb, esp_aes_init,
     esp_aes_setkey, esp_fill_random, timer_alarm_t_TIMER_ALARM_DIS,
     timer_autoreload_t_TIMER_AUTORELOAD_DIS, timer_config_t, timer_count_dir_t_TIMER_COUNT_UP,
-    timer_deinit, timer_get_counter_value, timer_init, timer_intr_t_TIMER_INTR_NONE,
+    timer_deinit, timer_get_counter_value, timer_init, timer_intr_t_TIMER_INTR_NONE, timer_pause,
     timer_set_counter_value, timer_src_clk_t_TIMER_SRC_CLK_APB, timer_start,
     timer_start_t_TIMER_PAUSE,
 };
 use rust_dilithium::{
     counter::{Counter, SoftwareAesCounter, BLOCK_SIZE, KEY_SIZE},
-    make_keys, sign, verify, Seed, Signature, SEED_SIZE, SIGNATURE_SIZE,
+    make_keys, sign, verify, Seed, Signature, PUBLIC_KEY_SIZE, SECRET_KEY_SIZE, SIGNATURE_SIZE,
 };
 
 pub struct HardwareAesCounter {
@@ -101,6 +101,14 @@ impl<const GROUP: u32, const TIMER: u32> Timer<GROUP, TIMER> {
         Self {}
     }
 
+    pub fn pause(&self, f: impl FnOnce()) {
+        unsafe {
+            timer_pause(GROUP, TIMER);
+            f();
+            timer_start(GROUP, TIMER);
+        }
+    }
+
     pub fn get(&self) -> u64 {
         let mut retval = 0u64;
 
@@ -144,8 +152,10 @@ pub fn compute_hardware(msg: &[u8], seed: &Seed) -> Option<Signature> {
 
 #[inline(never)]
 pub fn compute_reference(msg: &[u8]) -> Option<Signature> {
-    let mut pk = [0u8; SEED_SIZE / 2];
-    let mut sk = [0u8; SEED_SIZE / 2];
+    // The compiler might not ellide these variables initialization, which would cause an overhead.
+    // However, it is negligible compared to the execution time of the algorithm.
+    let mut pk = [0u8; PUBLIC_KEY_SIZE];
+    let mut sk = [0u8; SECRET_KEY_SIZE];
     let mut sig = [0u8; SIGNATURE_SIZE];
     let mut siglen = 0usize;
 

@@ -1,9 +1,21 @@
 all: build
 
-build: compare speed
+build: compare speed speed-keys speed-sign speed-verify speed-verify-fail
 
 speed:
 	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example speed --release
+
+speed-keys:
+	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example speed-keys --release
+
+speed-sign:
+	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example speed-sign --release
+
+speed-verify:
+	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example speed-verify --release
+
+speed-verify-fail:
+	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example speed-verify-fail --release
 
 compare:
 	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example compare --release
@@ -13,6 +25,18 @@ check: rust-dilithium/rsrc/fixtures.txt
 
 flash_speed: speed
 	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/speed
+
+flash_speed-keys: speed-keys
+	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/speed-keys
+
+flash_speed-sign: speed-sign
+	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/speed-sign
+
+flash_speed-verify: speed-verify
+	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/speed-verify
+
+flash_speed-verify-fail: speed-verify-fail
+	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/speed-verify-fail
 
 flash_compare: compare
 	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/compare

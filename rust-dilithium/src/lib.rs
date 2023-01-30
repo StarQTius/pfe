@@ -61,7 +61,7 @@ const GAMMA1: coefficient::Coefficient = 1 << 19;
 const GAMMA2: coefficient::Coefficient = (Q - 1) / 32;
 const D: coefficient::Coefficient = 13;
 const TAU: usize = 60;
-const SIGNATURE_SIZE: usize = SEED_SIZE / 2 + L * POLYZ_PACKED_SIZE + POLYVECH_PACKED_SIZE;
+pub const SIGNATURE_SIZE: usize = SEED_SIZE / 2 + L * POLYZ_PACKED_SIZE + POLYVECH_PACKED_SIZE;
 
 pub fn make_keys<Ctr: Counter>(seed: &Seed) -> Option<(PublicKey, SecretKey)> {
     let mut hasher = Shake256::default();

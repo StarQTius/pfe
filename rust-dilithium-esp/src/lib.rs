@@ -2,15 +2,17 @@
 
 use core::mem::{size_of, transmute, MaybeUninit};
 use esp_idf_sys::{
-    esp_aes_context, esp_aes_crypt_ecb, esp_aes_init, esp_aes_setkey, esp_fill_random,
-    timer_alarm_t_TIMER_ALARM_DIS, timer_autoreload_t_TIMER_AUTORELOAD_DIS, timer_config_t,
-    timer_count_dir_t_TIMER_COUNT_UP, timer_deinit, timer_get_counter_value, timer_init,
-    timer_intr_t_TIMER_INTR_NONE, timer_set_counter_value, timer_src_clk_t_TIMER_SRC_CLK_APB,
-    timer_start, timer_start_t_TIMER_PAUSE,
+    dilithium_reference_crypto_sign_keypair, dilithium_reference_crypto_sign_signature,
+    dilithium_reference_crypto_sign_verify, esp_aes_context, esp_aes_crypt_ecb, esp_aes_init,
+    esp_aes_setkey, esp_fill_random, timer_alarm_t_TIMER_ALARM_DIS,
+    timer_autoreload_t_TIMER_AUTORELOAD_DIS, timer_config_t, timer_count_dir_t_TIMER_COUNT_UP,
+    timer_deinit, timer_get_counter_value, timer_init, timer_intr_t_TIMER_INTR_NONE,
+    timer_set_counter_value, timer_src_clk_t_TIMER_SRC_CLK_APB, timer_start,
+    timer_start_t_TIMER_PAUSE,
 };
 use rust_dilithium::{
     counter::{Counter, SoftwareAesCounter, BLOCK_SIZE, KEY_SIZE},
-    make_keys, sign, verify, Seed, Signature,
+    make_keys, sign, verify, Seed, Signature, SEED_SIZE, SIGNATURE_SIZE,
 };
 
 pub struct HardwareAesCounter {
@@ -140,11 +142,42 @@ pub fn compute_hardware(msg: &[u8], seed: &Seed) -> Option<Signature> {
     }
 }
 
+#[inline(never)]
+pub fn compute_reference(msg: &[u8]) -> Option<Signature> {
+    let mut pk = [0u8; SEED_SIZE / 2];
+    let mut sk = [0u8; SEED_SIZE / 2];
+    let mut sig = [0u8; SIGNATURE_SIZE];
+    let mut siglen = 0usize;
+
+    unsafe {
+        dilithium_reference_crypto_sign_keypair(pk.as_mut_ptr(), sk.as_mut_ptr());
+        dilithium_reference_crypto_sign_signature(
+            sig.as_mut_ptr(),
+            &mut siglen,
+            msg.as_ptr(),
+            msg.len(),
+            sk.as_ptr(),
+        );
+        if dilithium_reference_crypto_sign_verify(
+            sig.as_mut_ptr(),
+            siglen,
+            msg.as_ptr(),
+            msg.len(),
+            pk.as_mut_ptr(),
+        ) == 0
+        {
+            Some(sig)
+        } else {
+            None
+        }
+    }
+}
+
 pub fn true_random_seed() -> Seed {
     let mut retval = Seed::default();
 
     unsafe {
-        esp_fill_random(transmute(retval.as_mut_ptr()), retval.len() as u32);
+        esp_fill_random(transmute(retval.as_mut_ptr()), retval.len());
     }
 
     retval

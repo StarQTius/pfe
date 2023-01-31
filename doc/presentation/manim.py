@@ -1,3 +1,4 @@
+from os import close
 from manim import *
 from numpy import array
 from random import choice
@@ -187,6 +188,24 @@ class Lattice(VoiceoverScene):
             ))
             
         self.wait(1.0)
+
+class LatticePic(Scene):
+    def construct(self):
+        self.camera.background_color = WHITE
+
+        axes = Axes(
+            x_range=[-10, 10, 1],
+            y_range=[-5, 5, 1],
+            x_length=10,
+            y_length=5,
+            axis_config={"color": GREEN},
+            tips=False,
+        ).move_to(0.5 * DOWN)
+        box = Rectangle(width=axes.width + 0.1, height=axes.height + 0.1).move_to(axes)
+        example_lattice = lattice(size=(axes.width, axes.height), dot_radius=0.03, origin=(-7/3, 4/7), step=(3/7, 1/3), shift_step=4/7).move_to(axes)
+        closest_element_circle = Circle(radius=0.1).move_to(0.22 * RIGHT + 0.55 * DOWN)
+        
+        self.add(axes, box, example_lattice, closest_element_circle)
 
 def bkmrk(string):
     return f"<bookmark mark='{string}'/>"

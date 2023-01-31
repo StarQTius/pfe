@@ -20,6 +20,12 @@ speed-verify-fail:
 compare:
 	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example compare --release
 
+demo-sender:
+	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example demo-sender --release
+
+demo-reader:
+	RUSTC_WRAPPER=sccache cd rust-dilithium-esp && cargo build --example demo-reader --release
+
 check: rust-dilithium/rsrc/fixtures.txt
 	RUSTC_WRAPPER=sccache cd rust-dilithium && cargo test
 
@@ -40,6 +46,12 @@ flash_speed-verify-fail: speed-verify-fail
 
 flash_compare: compare
 	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/compare
+
+flash_demo-sender: demo-sender
+	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/demo-sender
+
+flash_demo-reader: demo-reader
+	espflash rust-dilithium-esp/target/riscv32imc-esp-espidf/release/examples/demo-reader
 
 rust-dilithium/rsrc/fixtures.txt:
 	make -C dilithium/ref -j4
